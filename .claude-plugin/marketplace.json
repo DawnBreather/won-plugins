@@ -12,6 +12,12 @@
       "description": "Scaffold Docker developer workspaces with Tailscale SSH, DinD sidecar, and full toolchain.",
       "source": "./plugins/workspace/",
       "category": "devops"
+    },
+    {
+      "name": "plugin",
+      "description": "Scaffold Claude Code marketplaces, plugins, and skills.",
+      "source": "./plugins/plugin/",
+      "category": "productivity"
     }
   ]
 }
