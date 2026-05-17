@@ -1,0 +1,4 @@
+{
+  "name": "workspace",
+  "description": "Scaffold and manage Docker developer workspaces (tailscale + DinD + sshd trios)."
+}

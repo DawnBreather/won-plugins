@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-plugins",
+  "description": "Personal Claude Code plugin collection — devops tooling, workspace scaffolding, and productivity skills.",
+  "owner": {
+    "name": "Slava Kim",
+    "url": "https://github.com/DawnBreather"
+  },
+  "plugins": [
+    {
+      "name": "workspace",
+      "description": "Scaffold Docker developer workspaces with Tailscale SSH, DinD sidecar, and full toolchain.",
+      "source": "./plugins/workspace/",
+      "category": "devops"
+    }
+  ]
+}
