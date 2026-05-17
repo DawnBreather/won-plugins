@@ -1,4 +1,4 @@
-# claude-plugins
+# won-plugins
 
 Personal Claude Code plugin marketplace.
 
@@ -11,8 +11,8 @@ Personal Claude Code plugin marketplace.
 ## Install
 
 ```
-/plugin marketplace add DawnBreather/claude-plugins
-/plugin install workspace@claude-plugins
+/plugin marketplace add DawnBreather/won-plugins
+/plugin install workspace@won-plugins
 /reload-plugins
 ```
 
