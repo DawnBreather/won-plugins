@@ -18,6 +18,12 @@
       "description": "Scaffold Claude Code marketplaces, plugins, and skills.",
       "source": "./plugins/plugin/",
       "category": "productivity"
+    },
+    {
+      "name": "nano-banana",
+      "description": "AI image generation, editing, and upscaling via Gemini. MCP tools + workflow skills.",
+      "source": "./plugins/nano-banana/",
+      "category": "ai"
     }
   ]
 }
