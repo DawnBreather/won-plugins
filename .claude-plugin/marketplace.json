@@ -24,6 +24,12 @@
       "description": "AI image generation, editing, and upscaling via Gemini. MCP tools + workflow skills.",
       "source": "./plugins/nano-banana/",
       "category": "ai"
+    },
+    {
+      "name": "ibkr",
+      "description": "IBKR paper/live trading stack — setup, configure, monitor, debug, operate the dockerized Gateway + Minervini blend strategy bot.",
+      "source": "./plugins/ibkr/",
+      "category": "devops"
     }
   ]
 }

@@ -1,0 +1,4 @@
+{
+  "name": "ibkr",
+  "description": "IBKR paper/live trading stack — setup, configure, monitor, debug, and operate the dockerized Gateway + strategy bot."
+}
