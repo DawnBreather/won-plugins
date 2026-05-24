@@ -30,6 +30,12 @@
       "description": "IBKR paper/live trading stack — setup, configure, monitor, debug, operate the dockerized Gateway + Minervini blend strategy bot.",
       "source": "./plugins/ibkr/",
       "category": "devops"
+    },
+    {
+      "name": "church-ads",
+      "description": "Process CCS Seattle Sunday church announcements: PDF + voice memo -> bilingual per-ad MDs + Sanity events.",
+      "source": "./plugins/church-ads/",
+      "category": "productivity"
     }
   ]
 }
