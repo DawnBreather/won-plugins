@@ -35,7 +35,7 @@ Voice memo path on macOS Tahoe 26 = `~/Library/Group Containers/group.com.apple.
 - `raw/transcript.md` — full transcription
 - `raw/segments.json` — Gemini segmentation result
 - `01-{slug}.md`, `02-{slug}.md`, ... — per-ad MD files
-- `regen-{slug}.png` — nano-banana regenerated bilingual clean slide images
+- `regen-{slug}.en.png` / `regen-{slug}.ko.png` — nano-banana regenerated clean slide images, separate per language
 
 ## Pipeline
 
@@ -43,7 +43,7 @@ Voice memo path on macOS Tahoe 26 = `~/Library/Group Containers/group.com.apple.
 PDF -> pdftoppm -> page-N.png
 Voice memo -> OpenAI gpt-4o-transcribe -> transcript.md
 transcript + page images -> Gemini 3.5 Flash -> segments.json (per-ad chunks + bilingual fields)
-For each ad: page PNG -> nano-banana edit_image -> regen-{slug}.png
+For each ad x lang: page PNG -> nano-banana (gemini-3.1-flash-image-preview) -> regen-{slug}.{en|ko}.png
 For each ad: write {NN}-{slug}.md
 ```
 
@@ -88,55 +88,35 @@ The script:
 - Writes `transcript.md`, `segments.json`, per-ad MD files
 - Returns list of regen prompts (one per ad) for Phase 2
 
-### 3. Regenerate slide images
+### 3. Regenerate slide images (EN + KO per ad)
 
-For each ad in `segments.json`, call nano-banana edit_image MCP with the source page PNG and a clean-up prompt that emphasizes:
-- Bilingual EN+KO text (translate any KO-only or EN-only original)
-- Clean, professional church announcement slide
-- Same key visual elements (date, location, photos if present)
-- Remove glare/skew/photo artifacts
-
-```
-mcp__plugin_nano-banana_nano-banana__edit_image(
-  imagePath: "<RAW_DIR>/raw/page-N.png",
-  prompt: "<from segments.json[i].regen_prompt>",
-  outputPath: "<RAW_DIR>/regen-<slug>.png",
-  aspectRatio: "16:9"
-)
+```bash
+bun run ${CLAUDE_PLUGIN_ROOT}/scripts/regen-images.ts --out "$RAW_DIR"
 ```
 
-If multiple pages map to one ad, pass all as references.
+Produces `regen-{slug}.en.png` + `regen-{slug}.ko.png` for each ad. Each language is rendered exclusively in its own language (no mixing). Layout/style stays consistent between versions.
+
+The script uses Gemini directly via `@google/genai` (same model as nano-banana MCP: `gemini-3.1-flash-image-preview`) — bypasses the MCP server because MCP env may not propagate `GEMINI_API_KEY`. Loads creds from `~/.config/.env.d`.
 
 ### 4. Verify outputs
 
 ```bash
-ls -la "$RAW_DIR"/*.md "$RAW_DIR"/regen-*.png
+ls -la "$RAW_DIR"/*.md "$RAW_DIR"/regen-*.en.png "$RAW_DIR"/regen-*.ko.png
 ```
 
-Each ad MD should embed its regen image:
+Each ad MD embeds both EN + KO regen images:
 
 ```markdown
 # {Title EN} / {Title KO}
 
-![{Title}](regen-{slug}.png)
+EN: ![{Title}](regen-{slug}.en.png)
+
+KO: ![{Title}](regen-{slug}.ko.png)
 
 - **Date:** ...
 - **Time:** ...
 - **Location:** EN: ... / KO: ...
 - **Category:** ...
-
-## Description (EN)
-...
-
-## 설명 (한국어)
-...
-
-## Source
-
-- Slide: [raw/page-N.png](raw/page-N.png)
-- Transcript chunk:
-
-> {verbatim transcript chunk}
 ```
 
 ### 5. Report to user
@@ -159,6 +139,7 @@ Map ads to existing category keys when generating segments.json:
 - **macOS Unicode in old screenshots** (` ` narrow no-break space): irrelevant for PDF flow but watch out if user mixes inputs.
 - **Multi-page ads** rare but real — segmentation must consult both transcript and visual page content. Allow 1 ad to span 2 pages.
 - **Korean translation** needs church-appropriate vocabulary (예배/말씀/교제 etc.) — Gemini prompt should specify Korean-American bilingual congregation context.
-- **Regen prompt** must instruct: "preserve all factual info — dates, times, locations, fees, URLs". Hallucinated details corrupt output.
+- **Regen prompts** must instruct: "preserve all factual info — dates, times, locations, fees, URLs". Hallucinated details corrupt output. Each language gets its own prompt (en/ko).
+- **Language purity in images**: stronger-prompt wrapper is applied by `regen-images.ts` (CRITICAL: no English in KO slides; no Korean in EN slides). Without this, Gemini tends to mix languages.
 - **Hero exclusivity**: `primary=true` on at most one ad. If user has not specified, default all to `primary=false`.
 - **Existing CLAUDE.md**: project at `/Users/temporary/lab/church/ccs-events-seattle-clone` — read for `Event` schema, Sanity creds, hero rules.

@@ -89,7 +89,7 @@ interface AdSegment {
   full_description: { en: string; ko: string };
   links: { label: string; url: string }[];
   transcript_chunk: string;
-  regen_prompt: string;
+  regen_prompt: { en: string; ko: string };
   featured: boolean;
   primary: boolean;
 }
@@ -107,7 +107,7 @@ Task:
 - Use church-appropriate Korean (예배, 말씀, 교제, 묵상, 큐티, 헌금)
 - Map to one of these categories: college, youngAdult, adult, newcomer, specialEvents, general
 - Title slug: kebab-case, English, descriptive (e.g. "amazing-touch", "30-days-of-worship")
-- "regen_prompt" is for nano-banana image regen: describe a CLEAN bilingual EN+KO church announcement slide preserving ALL factual info (dates, times, locations, fees, URLs). No glare, no skew. Photographic quality. 16:9.
+- "regen_prompt" is { en, ko } — TWO separate prompts for nano-banana image regen, one per language. Each describes a CLEAN church announcement slide IN THAT LANGUAGE ONLY (English-only OR Korean-only, never mixed). Preserve ALL factual info (dates, times, locations, fees, URLs). No glare, no skew. Photographic quality. 16:9. The visual layout/style should match between en and ko versions.
 - "transcript_chunk" is verbatim from the transcript (the part of the audio related to this specific ad)
 - "featured" defaults true for all (can be tuned later); "primary" defaults false (only one event can be hero, user picks later)
 
@@ -159,7 +159,7 @@ async function segmentWithGemini(
                   },
                 },
                 transcript_chunk: { type: 'string' },
-                regen_prompt: { type: 'string' },
+                regen_prompt: bilingual(),
                 featured: { type: 'boolean' },
                 primary: { type: 'boolean' },
               },
@@ -205,7 +205,9 @@ function writeAdMd(ad: AdSegment, outDir: string, pagePaths: string[]): string {
 
   const body = `# ${ad.title.en} / ${ad.title.ko}
 
-![${ad.title.en}](regen-${ad.slug}.png)
+EN: ![${ad.title.en}](regen-${ad.slug}.en.png)
+
+KO: ![${ad.title.ko}](regen-${ad.slug}.ko.png)
 
 - **Date:** ${ad.date}
 - **Time:** ${ad.time}
@@ -238,10 +240,16 @@ Transcript chunk:
 
 > ${ad.transcript_chunk.replace(/\n/g, '\n> ')}
 
-## Regen Prompt (for nano-banana edit_image)
+## Regen Prompts (for nano-banana edit_image)
 
+EN:
 \`\`\`
-${ad.regen_prompt}
+${ad.regen_prompt.en}
+\`\`\`
+
+KO:
+\`\`\`
+${ad.regen_prompt.ko}
 \`\`\`
 `;
 
