@@ -1,111 +1,107 @@
 ---
 name: push-to-sanity
-description: Use when per-ad markdown files exist in `.church-ads.raw/YYYYMMDD.church-ads/` (output of /church-ads:process-ads) and the user wants to push them as event documents to the CCS Seattle Sanity CMS. Triggers on "push ads to Sanity", "publish today's announcements", "push to CMS", or `/church-ads:push-to-sanity`. Destructive — uses createOrReplace and unsets `primary` on existing hero events.
+description: Use when per-ad markdown files exist in `.church-ads.raw/YYYYMMDD.church-ads/` (output of /church-ads:process-ads) and the user wants to push them as event documents to the CCS Seattle Sanity CMS. Triggers on "push ads to Sanity", "publish today's announcements", "push to CMS", or `/church-ads:push-to-sanity`. Two-step: build a merge plan, user reviews/edits, then apply.
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, AskUserQuestion
 ---
 
 # Push Ads to Sanity
 
-Convert per-ad markdown files (output of `/church-ads:process-ads`) into Sanity event documents.
+Two-step push: build a merge plan, let the user review, then apply.
 
 ## When to Use
 
-After `/church-ads:process-ads` produced `{NN}-{slug}.md` files and the user has reviewed them. Run this to push to the live CMS — it triggers a Cloudflare Pages rebuild via Sanity webhook.
-
-## Prerequisites
-
-| Item | Where |
-|------|-------|
-| Per-ad MDs | `.church-ads.raw/YYYYMMDD.church-ads/{NN}-{slug}.md` |
-| Regen images | `.church-ads.raw/YYYYMMDD.church-ads/regen-{slug}.png` |
-| Sanity creds | `studio/.env` (`SANITY_STUDIO_PROJECT_ID`, `SANITY_AUTH_TOKEN`) |
-| Project | `/Users/temporary/lab/church/ccs-events-seattle-clone` |
-
-## Confirm before push
-
-Always ask:
-
-1. Which ads should be `featured: true`?
-2. Which single ad (if any) should be the new `primary` (hero)? Default = none, keep current hero.
-3. Confirm date / time / location strings match what's in the MDs.
+After `/church-ads:process-ads` produced `{NN}-{slug}.md` files plus `regen-{slug}.{en,ko}.png` images. Run this to push to the live CMS — Sanity webhook triggers a Cloudflare Pages rebuild.
 
 ## Pipeline
 
-### 1. Parse MDs -> JSON spec
-
-Read each `{NN}-{slug}.md`. Extract YAML-like front block + bilingual fields. Resolve to:
-
-```ts
-{
-  _id: `event-${slug}`,
-  imageFile: `regen-${slug}.png`,
-  categoryKey: 'general' | 'specialEvents' | ...,
-  title: { en, ko },
-  date: '...',
-  time: '...',
-  location: { en, ko },
-  description: { en, ko },
-  fullDescription: { en, ko },
-  links: [{ label, url }],
-  featured: boolean,
-  primary: boolean,
-}
-```
-
-### 2. Generate migration script
-
-Write to `studio/add-${MMDD}-events.mjs` following `studio/add-feb22-events.mjs` pattern. Include:
-- Hero unset step (clear current `primary` events)
-- Image upload via `client.assets.upload`
-- `createOrReplace` per event
-
-Use the existing script as the template — do NOT diverge from its structure.
-
-### 3. Run migration
+### Step 1 — Build merge plan
 
 ```bash
-cd /Users/temporary/lab/church/ccs-events-seattle-clone/studio
-export $(cat .env | xargs)
-node add-${MMDD}-events.mjs
+bun run ${CLAUDE_PLUGIN_ROOT}/scripts/build-merge-plan.ts \
+  --out "$RAW_DIR" \
+  --studio-env "<repo>/studio/.env"
 ```
 
-### 4. Verify
+Fetches all existing Sanity events, fuzzy-matches each new ad against them by title similarity + slug substring, and writes `<RAW_DIR>/MERGE_PLAN.md` with one block per ad.
+
+### Step 2 — User reviews MERGE_PLAN.md
+
+Each ad block looks like:
+
+```yaml
+ad_index: 7
+slug: friday-night-prayer
+action: merge: event-the-gathering-friday-prayer
+featured: true
+primary: false
+publish_end_date: 2026-05-30
+extra_images:
+```
+
+User edits `action:`, `featured:`, `primary:`, `publish_end_date:`, `extra_images:` per ad.
+
+### Step 3 — Apply
 
 ```bash
+bun run ${CLAUDE_PLUGIN_ROOT}/scripts/apply-plan.ts \
+  --out "$RAW_DIR" \
+  --studio-env "<repo>/studio/.env"
+```
+
+For each non-skipped ad:
+1. Uploads `regen-{slug}.en.png` + `regen-{slug}.ko.png` as a single `images[0] = { en, ko }` pair
+2. Uploads any `extra_images:` filenames -> additional `images[N]` entries (same image used for both langs)
+3. `new` -> `createOrReplace` w/ `_id = event-{slug}`
+4. `merge: <id>` -> `patch(id).set(doc)` — preserves `_id`
+5. `skip` -> nothing
+6. If any new ad has `primary: true`, clears `primary` on all other events first (hero exclusivity)
+
+## Action grammar
+
+| Value | Effect |
+|-------|--------|
+| `new` | Create `event-{slug}` |
+| `merge: <_id>` | Overwrite that existing event |
+| `skip` | No-op |
+
+## Multi-image support
+
+`extra_images: file1.png, file2.png` (comma-separated, files in `<RAW_DIR>`). Become `images[1..]`. Hero card always uses `images[0]`.
+
+To produce extras, drop additional PNGs in `<RAW_DIR>` before running apply — for example a photo of the actual venue.
+
+## Bilingual fallback
+
+`images[].en` and `images[].ko` are independent. Frontend shows the current-language image; if missing, falls back to the other language; if both missing, uses `fallbackGradient`. Editor is free to set just one language.
+
+## Hero exclusivity
+
+The Studio's `exclusiveHeroPublishAction` enforces this on UI publish. The apply script enforces it on push. Setting `primary: true` on any ad in the plan automatically unsets `primary` on every other event in Sanity.
+
+## publishEndDate
+
+Optional `YYYY-MM-DD`. Events past this date are filtered out at GROQ build time. Daily GitHub Actions cron triggers a Cloudflare rebuild at 04:00 PT so ended events drop out without manual intervention.
+
+## Verification
+
+```bash
+cd <repo>/studio && export $(cat .env | xargs)
 node -e "
 import('@sanity/client').then(({createClient}) => {
   const c = createClient({projectId:process.env.SANITY_STUDIO_PROJECT_ID, dataset:'production', apiVersion:'2025-01-01', useCdn:false, token:process.env.SANITY_AUTH_TOKEN});
-  c.fetch('*[_type==\"event\" && _id in \$ids]{_id,title,featured,primary}', {ids: [...]}).then(console.log);
+  c.fetch('*[_type==\"event\" && _id in \$ids]{_id,title,featured,primary,publishEndDate,\"images\":count(images)}', {ids: [...]}).then(d => console.log(JSON.stringify(d, null, 2)));
 })
 "
 ```
 
-Report which docs were created and which is the new hero.
+## Live URL
 
-### 5. Webhook -> rebuild
-
-Sanity webhook auto-fires Cloudflare Pages deploy hook (~1-2 min rebuild). User does not need to deploy manually. Report the live URL: `https://ccs-events-seattle.pages.dev`.
-
-## Categories
-
-Map ad MD `category:` field to Sanity category document `_ref`:
-
-| Key | Korean | Sanity ref |
-|-----|--------|-----------|
-| `college` | 대학부 | `category-college` |
-| `youngAdult` | 청년부 | `category-youngAdult` |
-| `adult` | 장년부 | `category-adult` |
-| `newcomer` | 새가족 | `category-newcomer` |
-| `specialEvents` | 특별 행사 | `category-specialEvents` |
-| `general` | 전체 | `category-general` |
+`https://ccs-events-seattle.pages.dev` — rebuild ~1-2 min after push (webhook from Sanity).
 
 ## Gotchas
 
-- **`createOrReplace` is destructive** — overwrites existing event with same `_id`. Use stable slug-based `_id`s; ask user before overwriting same-day re-runs.
-- **Hero exclusivity is enforced** by Studio publish action AND by the migration script. Migration script unsets `primary` on all other events first, then sets new hero.
-- **Korean text must use church terminology** (예배, 말씀, 교제, 묵상). Don't ship machine translations without review.
-- **Image upload is one-shot** — no idempotency. Re-running creates duplicate assets. Check `regen-{slug}.png` mtime to skip unchanged.
-- **Webhook -> rebuild ~1-2 min** — user may not see changes immediately. Don't claim "live" until they confirm.
-- **Bilingual fields all required** — Sanity schema validates both `en` and `ko`. Empty strings fail.
-- **Absolute paths** in script — `import.meta.dirname` resolves relative to `studio/`. Image paths must be `..` -> `.church-ads.raw/...`.
+- **`bunx tsc --noEmit`** before running: the apply script uses `@sanity/client` typings.
+- **Image upload is one-shot** — re-running the apply step uploads new asset instances. Don't loop.
+- **Korean text quality**: review per-ad MD output before applying; machine translations sometimes miss church terminology.
+- **`publishEndDate` filter is build-time**: changes only take effect after next rebuild (auto-cron at 11:00 UTC = 04:00 PT, or manual hook).

@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
+    "@sanity/client": "^7.22.0",
     "openai": "^4.70.0"
   },
   "devDependencies": {
