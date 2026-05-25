@@ -15,31 +15,36 @@ After `/church-ads:process-ads` produced `{NN}-{slug}.md` files plus `regen-{slu
 
 ## Pipeline
 
-### Step 1 — Build merge plan
+### Step 1 — Build context dump
 
 ```bash
-bun run ${CLAUDE_PLUGIN_ROOT}/scripts/build-merge-plan.ts \
+bun run ${CLAUDE_PLUGIN_ROOT}/scripts/build-merge-context.ts \
   --out "$RAW_DIR" \
   --studio-env "<repo>/studio/.env"
 ```
 
-Fetches all existing Sanity events, fuzzy-matches each new ad against them by title similarity + slug substring, and writes `<RAW_DIR>/MERGE_PLAN.md` with one block per ad.
+Fetches every existing Sanity event with full bilingual fields and writes `<RAW_DIR>/MERGE_CONTEXT.md` — a structured dump of all events plus all new ads from `segments.json`.
 
-### Step 2 — User reviews MERGE_PLAN.md
+### Step 2 — LLM decides merge plan
 
-Each ad block looks like:
+**You (the Claude Code session running this skill) read MERGE_CONTEXT.md and decide.** This is delegated reasoning, not an algorithmic match. Take time to think carefully about each ad. Use:
+- The full bilingual title, date, time, location, description for every existing event
+- The Korean/English titles + descriptions of new ads
+- The voice transcript chunk attached to each ad (gives context the slide alone may not)
 
-```yaml
-ad_index: 7
-slug: friday-night-prayer
-action: merge: event-the-gathering-friday-prayer
-featured: true
-primary: false
-publish_end_date: 2026-05-30
-extra_images:
-```
+**Decision categories:**
+- `new` — distinct event, no existing record
+- `merge: <_id>` — refresh of an existing recurring or series event (Friday prayer next week, monthly devotional, current cohort of a class)
+- `skip` — duplicate within this batch, or content not worth publishing
 
-User edits `action:`, `featured:`, `primary:`, `publish_end_date:`, `extra_images:` per ad.
+**Heuristics to apply:**
+- Recurring weekly/monthly events that already exist in Sanity = merge (same event document, new image + date)
+- Same series, same cohort/instance number = merge
+- New cohort/year of a series ("23rd" replacing "22nd") = `new` only if the prior is fully concluded
+- Different scope under same ministry (golf tournament vs men's general gathering) = separate
+- Past existing event with no recurrence + new future event of similar topic = usually `new`
+
+Write the result to `<RAW_DIR>/MERGE_PLAN.md`. Per ad include a `reasoning:` block explaining the decision. The user can override anything before applying.
 
 ### Step 3 — Apply
 
@@ -56,6 +61,29 @@ For each non-skipped ad:
 4. `merge: <id>` -> `patch(id).set(doc)` — preserves `_id`
 5. `skip` -> nothing
 6. If any new ad has `primary: true`, clears `primary` on all other events first (hero exclusivity)
+
+## MERGE_PLAN.md format
+
+```markdown
+# Merge Plan — YYYYMMDD
+
+## 01 — <Title EN> / <Title KO>
+
+reasoning: |
+  <Why this decision was made — recurring? series? distinct?>
+
+```yaml
+ad_index: 1
+slug: father-school-golf-tournament
+action: merge: 793e90c1-cff1-4cf5-84af-c8fd4f5c428a
+featured: true
+primary: false
+publish_end_date: 2026-05-31
+extra_images:
+```
+```
+
+The apply script parses only the `yaml` blocks. The `reasoning:` paragraphs are for human review.
 
 ## Action grammar
 
