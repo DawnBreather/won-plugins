@@ -1,0 +1,25 @@
+{
+  "name": "remote-ctx-efficiency",
+  "description": "Injects a standing SessionStart reminder that rtk/context-mode don't reach inside ssh — wrap output-heavy remote commands in ctx_execute (or run Claude on the remote host).",
+  "author": {
+    "name": "Slava Kim",
+    "url": "https://github.com/DawnBreather"
+  },
+  "license": "MIT",
+  "keywords": ["ssh", "remote", "token-efficiency", "context-mode", "rtk", "session-start"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/inject-remote-ctx-habit.mjs",
+            "timeout": 5,
+            "statusMessage": "Loading remote token-efficiency habit..."
+          }
+        ]
+      }
+    ]
+  },
+  "skills": ["./skills/remote-token-efficiency"]
+}

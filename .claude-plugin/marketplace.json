@@ -36,6 +36,12 @@
       "description": "Process CCS Seattle Sunday church announcements: PDF + voice memo -> bilingual per-ad MDs + Sanity events.",
       "source": "./plugins/church-ads/",
       "category": "productivity"
+    },
+    {
+      "name": "remote-ctx-efficiency",
+      "description": "Injects a standing SessionStart reminder that rtk/context-mode don't reach inside ssh — wrap output-heavy remote commands in ctx_execute or run Claude on the remote host.",
+      "source": "./plugins/remote-ctx-efficiency/",
+      "category": "productivity"
     }
   ]
 }
