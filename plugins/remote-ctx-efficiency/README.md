@@ -19,9 +19,13 @@ from either proxy. This plugin keeps that fact in front of Claude every session.
 ## How it works
 
 Mirrors the caveman / superpowers pattern: a SessionStart hook
-(`hooks/inject-remote-ctx-habit.mjs`) writes guidance to stdout, which Claude
+(`hooks/inject-remote-ctx-habit.sh`) writes guidance to stdout, which Claude
 Code injects as hidden session context. **No files are mutated** — no
 `CLAUDE.md` is touched. Disable the plugin and the habit is gone instantly.
+
+The hook is pure POSIX `sh` (a static heredoc) with **no node/bun/python
+dependency**, so it runs under any shell Claude Code uses to invoke it — even on
+a box where `node` isn't on the hook's PATH (e.g. a Nushell-default macOS host).
 
 A companion skill (`remote-token-efficiency`) carries the full how-to for
 on-demand deep reference.
