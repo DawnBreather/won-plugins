@@ -12,7 +12,7 @@
  *   bun run process-ads.ts --date 20260524 --pdf <path> --voice <path> --out <dir>
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, copyFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, copyFileSync, renameSync } from 'node:fs';
 import { join, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import OpenAI from 'openai';
@@ -56,6 +56,17 @@ function extractPdfPages(pdf: string, rawDir: string): string[] {
   const prefix = join(rawDir, 'page');
   const r = spawnSync('pdftoppm', ['-png', '-r', '200', pdf, prefix], { stdio: 'inherit' });
   if (r.status !== 0) throw new Error('pdftoppm failed');
+  const pages = readdirSync(rawDir)
+    .filter((f) => /^page-\d+\.png$/.test(f))
+    .sort();
+  for (const f of pages) {
+    const m = f.match(/^page-(\d+)\.png$/);
+    if (!m) continue;
+    const padded = `page-${m[1].padStart(2, '0')}.png`;
+    if (padded !== f) {
+      renameSync(join(rawDir, f), join(rawDir, padded));
+    }
+  }
   return readdirSync(rawDir)
     .filter((f) => /^page-\d+\.png$/.test(f))
     .map((f) => join(rawDir, f))

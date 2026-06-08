@@ -73,16 +73,20 @@ If PDF or voice missing -> stop, ask user.
 
 ```bash
 cd <repo-root>
+export PATH="$HOME/.local/share/mise/installs/bun/latest/bin:/opt/homebrew/bin:$PATH"
 bun run ${CLAUDE_PLUGIN_ROOT}/scripts/process-ads.ts \
   --date "$DATE" \
   --pdf "$PDF" \
   --voice "$VOICE" \
-  --out "$RAW_DIR"
+  --out "$(pwd)/$RAW_DIR"
 ```
+
+**IMPORTANT:** Always pass absolute paths to `--out`. Relative paths break `regen-images.ts` because `resolve()` depends on cwd at runtime. Use `$(pwd)/$RAW_DIR` or a full path.
 
 The script:
 - Loads creds from `~/.config/.env.d` (`OPENAI_API_KEY`, `GEMINI_API_KEY`)
 - Extracts PDF pages via `pdftoppm` (must be on PATH)
+- Zero-pads page filenames (`page-01.png`, `page-02.png`, ...) for consistency with regen
 - Transcribes voice memo
 - Calls Gemini for segmentation + bilingual translation
 - Writes `transcript.md`, `segments.json`, per-ad MD files
@@ -91,7 +95,7 @@ The script:
 ### 3. Regenerate slide images (EN + KO per ad)
 
 ```bash
-bun run ${CLAUDE_PLUGIN_ROOT}/scripts/regen-images.ts --out "$RAW_DIR"
+bun run ${CLAUDE_PLUGIN_ROOT}/scripts/regen-images.ts --out "$(pwd)/$RAW_DIR"
 ```
 
 Produces `regen-{slug}.en.png` + `regen-{slug}.ko.png` for each ad. Each language is rendered exclusively in its own language (no mixing). Layout/style stays consistent between versions.
