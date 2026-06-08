@@ -299,6 +299,10 @@ async function main(): Promise<void> {
   console.log(`[2/3] Segmenting + translating with Gemini...`);
   const genai = new GoogleGenAI({ apiKey: geminiKey });
   const ads = await segmentWithGemini(pagePaths, transcript, genai);
+  const hasZeroIndex = ads.some((a) => a.page_indices.includes(0));
+  if (hasZeroIndex) {
+    for (const a of ads) a.page_indices = a.page_indices.map((i) => i + 1);
+  }
   const segmentsPath = join(rawDir, 'segments.json');
   writeFileSync(segmentsPath, JSON.stringify({ ads }, null, 2));
   console.log(`  -> ${ads.length} ads to ${segmentsPath}`);
