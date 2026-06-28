@@ -127,9 +127,14 @@ import('@sanity/client').then(({createClient}) => {
 
 `https://ccs-events-seattle.pages.dev` — rebuild ~1-2 min after push (webhook from Sanity).
 
+## Links over QR codes (policy)
+
+Sign-up actions live in the event's `links[]` (each `{ label, url }`), NOT as a QR code baked into the image. `EventDialog.svelte` renders `links[]` as clickable buttons — that is the canonical CTA path for web visitors. Regenerated images deliberately have NO QR code (see process-ads skill: Gemini-regenerated QRs scan to garbage). Before applying, confirm each ad that had a QR on its source slide has the REAL decoded URL in its `links[]` (verify by decoding the source `raw/page-NN.png`, since the segment step hallucinates fake `forms.gle/...` URLs).
+
 ## Gotchas
 
 - **`bunx tsc --noEmit`** before running: the apply script uses `@sanity/client` typings.
 - **Image upload is one-shot** — re-running the apply step uploads new asset instances. Don't loop.
 - **Korean text quality**: review per-ad MD output before applying; machine translations sometimes miss church terminology.
 - **`publishEndDate` filter is build-time**: changes only take effect after next rebuild (auto-cron at 11:00 UTC = 04:00 PT, or manual hook).
+- **Merge does a full `.set()` overwrite** — it replaces every field on the target event with the new ad's content. Before choosing `merge`, check the existing event isn't RICHER (e.g. has contact phone numbers the new slide lacks); if so, `skip` to avoid regressing it.

@@ -145,5 +145,15 @@ Map ads to existing category keys when generating segments.json:
 - **Korean translation** needs church-appropriate vocabulary (예배/말씀/교제 etc.) — Gemini prompt should specify Korean-American bilingual congregation context.
 - **Regen prompts** must instruct: "preserve all factual info — dates, times, locations, fees, URLs". Hallucinated details corrupt output. Each language gets its own prompt (en/ko).
 - **Language purity in images**: stronger-prompt wrapper is applied by `regen-images.ts` (CRITICAL: no English in KO slides; no Korean in EN slides). Without this, Gemini tends to mix languages.
+- **NO QR CODES in regenerated images** (policy, enforced by `regen-images.ts` `strictPrompt` wrapper): Gemini-regenerated QR codes LOOK correct but scan to garbage — verified repeatedly via jsQR decode returning null on every regen QR. A broken QR is worse than none. The wrapper instructs Gemini to OMIT all QR codes and leave clean background. The real sign-up URL belongs in the event's `links[]` instead, which the frontend `EventDialog.svelte` renders as clickable buttons (web visitors click, they never scan an on-screen image). If a per-ad `regen_prompt` in `segments.json` still says "include a QR code" (the segment step often does), STRIP that clause from the prompt before regen so it doesn't fight the wrapper.
+- **Segment step HALLUCINATES sign-up URLs**: Gemini invents plausible-but-fake links (e.g. `https://forms.gle/sonlight-summer-volunteer`, `https://forms.gle/newcomers-dinner`) when a slide shows a QR but no text URL. ALWAYS verify links by decoding the actual QR from the source `raw/page-NN.png`. The real URL must replace the hallucinated one in `segments.json` `links[]`, then re-emit MDs with `rewrite-mds.ts`. Decode QR with the plugin's installed `sharp` + `jsqr` (in `<plugin>/node_modules`):
+  ```js
+  // run from inside the church-ads plugin dir so bun resolves sharp/jsqr
+  import sharp from 'sharp'; import jsQR from 'jsqr';
+  const { data, info } = await sharp(f).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  console.log(jsQR(new Uint8ClampedArray(data), info.width, info.height)?.data);
+  ```
 - **Hero exclusivity**: `primary=true` on at most one ad. If user has not specified, default all to `primary=false`.
+- **Run scripts from the marketplace source**, not the install cache: `~/.claude/plugins/marketplaces/won-plugins/plugins/church-ads/scripts/` — the cache copy (`~/.claude/plugins/cache/...`) can lag behind committed fixes.
+- **`bun` not on PATH** in fresh shells (mise not initialized): prefix every run with `export PATH="$HOME/.local/share/mise/installs/bun/latest/bin:/opt/homebrew/bin:$PATH"`.
 - **Existing CLAUDE.md**: project at `/Users/temporary/lab/church/ccs-events-seattle-clone` — read for `Event` schema, Sanity creds, hero rules.
