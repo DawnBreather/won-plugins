@@ -109,6 +109,8 @@ function strictPrompt(base: string, lang: 'en' | 'ko'): string {
   const otherName = lang === 'en' ? 'Korean' : 'English';
   return `Render a church announcement slide with text EXCLUSIVELY in ${langName}. CRITICAL: Do NOT include any ${otherName} text — every word, label, heading, and body line must be in ${langName} only.
 
+CRITICAL: Do NOT render any QR code, barcode, or scannable square matrix in the image. If the source slide contains a QR code, OMIT it entirely and leave that area as clean background. (Regenerated QR codes do not scan — the real sign-up link is provided separately as a clickable button, so the QR is unnecessary.) Do not draw QR-like noise or placeholder squares.
+
 ${base}`;
 }
 
