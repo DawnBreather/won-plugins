@@ -61,27 +61,29 @@ For each ad: write {NN}-{slug}.md
 
 ```bash
 DATE=20260524  # ask user if not obvious
-RAW_DIR=".church-ads.raw/${DATE}.church-ads"
-PDF="${RAW_DIR}/church-ads-${DATE}.pdf"
+REPO=/Users/temporary/lab/church/ccs-events-seattle-clone   # HARDCODE the repo root — see below
+RAW_DIR="$REPO/.church-ads.raw/${DATE}.church-ads"
+PDF="$RAW_DIR/church-ads-${DATE}.pdf"
 VM_DIR="$HOME/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings"
 VOICE=$(ls "$VM_DIR"/${DATE}*.m4a 2>/dev/null | head -1)
 ```
 
 If PDF or voice missing -> stop, ask user.
 
+**Multiple voice memos same day:** if `ls` returns more than one `.m4a`, DON'T blindly take the first. Check durations (`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 FILE`) and pick the long one — a short (<30s) file is a false-start recording.
+
 ### 2. Run the pipeline script
 
 ```bash
-cd <repo-root>
 export PATH="$HOME/.local/share/mise/installs/bun/latest/bin:/opt/homebrew/bin:$PATH"
 bun run ${CLAUDE_PLUGIN_ROOT}/scripts/process-ads.ts \
   --date "$DATE" \
   --pdf "$PDF" \
   --voice "$VOICE" \
-  --out "$(pwd)/$RAW_DIR"
+  --out "$RAW_DIR"
 ```
 
-**IMPORTANT:** Always pass absolute paths to `--out`. Relative paths break `regen-images.ts` because `resolve()` depends on cwd at runtime. Use `$(pwd)/$RAW_DIR` or a full path.
+**IMPORTANT — use HARDCODED absolute paths, NOT `$(pwd)`.** All of `--pdf`, `--voice`, `--out` must be absolute and anchored to the hardcoded `$REPO` (as above). Do NOT build them from `$(pwd)`: earlier steps in a session (e.g. Sanity verification) leave the shell's cwd inside `studio/`, so `$(pwd)/...` resolves to the wrong directory and `pdftoppm` fails with "No such file". Relative paths also break `regen-images.ts` (its `resolve()` depends on cwd at runtime).
 
 The script:
 - Loads creds from `~/.config/.env.d` (`OPENAI_API_KEY`, `GEMINI_API_KEY`)
@@ -95,7 +97,7 @@ The script:
 ### 3. Regenerate slide images (EN + KO per ad)
 
 ```bash
-bun run ${CLAUDE_PLUGIN_ROOT}/scripts/regen-images.ts --out "$(pwd)/$RAW_DIR"
+bun run ${CLAUDE_PLUGIN_ROOT}/scripts/regen-images.ts --out "$RAW_DIR"
 ```
 
 Produces `regen-{slug}.en.png` + `regen-{slug}.ko.png` for each ad. Each language is rendered exclusively in its own language (no mixing). Layout/style stays consistent between versions.
