@@ -103,6 +103,14 @@ interface AdSegment {
   regen_prompt: { en: string; ko: string };
   featured: boolean;
   primary: boolean;
+  // Machine-readable schedule (mirrors the Sanity `schedule` field group).
+  schedule_kind: 'once' | 'recurring' | 'ongoing';
+  start_date: string; // YYYY-MM-DD or '' (once only)
+  end_date: string; // YYYY-MM-DD or '' (once only)
+  start_time: string; // HH:MM 24h or ''
+  end_time: string; // HH:MM 24h or ''
+  rec_freq: 'weekly' | 'biweekly' | 'monthly' | 'none';
+  rec_weekday: number; // 0=Sun..6=Sat, -1 if n/a
 }
 
 const SEGMENT_SCHEMA_PROMPT = `You are processing weekly Sunday announcements for Community Church of Seattle (CCS / 시애틀 형제교회), a Korean-American bilingual congregation.
@@ -121,6 +129,12 @@ Task:
 - "regen_prompt" is { en, ko } — TWO separate prompts for nano-banana image regen, one per language. Each describes a CLEAN church announcement slide IN THAT LANGUAGE ONLY (English-only OR Korean-only, never mixed). Preserve ALL factual info (dates, times, locations, fees, URLs). No glare, no skew. Photographic quality. 16:9. The visual layout/style should match between en and ko versions.
 - "transcript_chunk" is verbatim from the transcript (the part of the audio related to this specific ad)
 - "featured" defaults true for all (can be tuned later); "primary" defaults false (only one event can be hero, user picks later)
+- SCHEDULE (for the site calendar) — classify each ad:
+  - "schedule_kind": "once" (a specific date/range, e.g. "July 9-10"), "recurring" (repeats: "Every Sunday", "every other Tuesday", "Every Month"), or "ongoing" (no calendar slot: "Ongoing", "All Year Around", open sign-up).
+  - For "once": set start_date (YYYY-MM-DD) and end_date (= start_date if single day). Times are Pacific; convert "7 PM" -> "19:00", "4:20-7:00 PM" -> start_time 16:20 end_time 19:00. If the year is not explicit, infer it from context (announcements are for the current/upcoming season).
+  - For "recurring": set rec_freq (weekly/biweekly/monthly) and rec_weekday (Sun=0..Sat=6, -1 for monthly). Leave dates empty.
+  - For "ongoing": leave dates/recurrence empty (rec_freq "none", rec_weekday -1).
+  - Unused string fields = "" ; unused rec_freq = "none" ; unused rec_weekday = -1.
 
 Output ONLY valid JSON: { "ads": [...] }`;
 
@@ -173,11 +187,20 @@ async function segmentWithGemini(
                 regen_prompt: bilingual(),
                 featured: { type: 'boolean' },
                 primary: { type: 'boolean' },
+                schedule_kind: { type: 'string', enum: ['once', 'recurring', 'ongoing'] },
+                start_date: { type: 'string' },
+                end_date: { type: 'string' },
+                start_time: { type: 'string' },
+                end_time: { type: 'string' },
+                rec_freq: { type: 'string', enum: ['weekly', 'biweekly', 'monthly', 'none'] },
+                rec_weekday: { type: 'integer' },
               },
               required: [
                 'index', 'slug', 'page_indices', 'category_key', 'title',
                 'date', 'time', 'location', 'description', 'full_description',
                 'links', 'transcript_chunk', 'regen_prompt', 'featured', 'primary',
+                'schedule_kind', 'start_date', 'end_date', 'start_time', 'end_time',
+                'rec_freq', 'rec_weekday',
               ],
             },
           },
@@ -203,6 +226,21 @@ function bilingual() {
 
 // ------------- phase 3: write MDs -------------
 
+function formatSchedule(ad: AdSegment): string {
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  if (ad.schedule_kind === 'once') {
+    const range = ad.end_date && ad.end_date !== ad.start_date ? `${ad.start_date} -> ${ad.end_date}` : ad.start_date;
+    const t = ad.start_time ? ` @ ${ad.start_time}${ad.end_time ? `-${ad.end_time}` : ''}` : '';
+    return `once · ${range || '?'}${t}`;
+  }
+  if (ad.schedule_kind === 'recurring') {
+    const day = ad.rec_weekday >= 0 && ad.rec_weekday <= 6 ? ` ${wd[ad.rec_weekday]}` : '';
+    const t = ad.start_time ? ` @ ${ad.start_time}` : '';
+    return `recurring · ${ad.rec_freq}${day}${t}`;
+  }
+  return 'ongoing';
+}
+
 function writeAdMd(ad: AdSegment, outDir: string, pagePaths: string[]): string {
   const num = String(ad.index).padStart(2, '0');
   const filename = `${num}-${ad.slug}.md`;
@@ -224,6 +262,7 @@ KO: ![${ad.title.ko}](regen-${ad.slug}.ko.png)
 - **Time:** ${ad.time}
 - **Location:** EN: ${ad.location.en} / KO: ${ad.location.ko}
 - **Category:** ${ad.category_key}
+- **Schedule:** ${formatSchedule(ad)}
 - **Featured:** ${ad.featured}
 - **Primary (hero):** ${ad.primary}
 

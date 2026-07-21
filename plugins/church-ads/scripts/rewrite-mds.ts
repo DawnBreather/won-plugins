@@ -25,6 +25,29 @@ interface Ad {
   regen_prompt: { en: string; ko: string };
   featured: boolean;
   primary: boolean;
+  schedule_kind?: 'once' | 'recurring' | 'ongoing';
+  start_date?: string;
+  end_date?: string;
+  start_time?: string;
+  end_time?: string;
+  rec_freq?: 'weekly' | 'biweekly' | 'monthly' | 'none';
+  rec_weekday?: number;
+}
+
+function formatSchedule(ad: Ad): string {
+  if (!ad.schedule_kind) return '(not set)';
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  if (ad.schedule_kind === 'once') {
+    const range = ad.end_date && ad.end_date !== ad.start_date ? `${ad.start_date} -> ${ad.end_date}` : ad.start_date;
+    const t = ad.start_time ? ` @ ${ad.start_time}${ad.end_time ? `-${ad.end_time}` : ''}` : '';
+    return `once · ${range || '?'}${t}`;
+  }
+  if (ad.schedule_kind === 'recurring') {
+    const day = ad.rec_weekday !== undefined && ad.rec_weekday >= 0 && ad.rec_weekday <= 6 ? ` ${wd[ad.rec_weekday]}` : '';
+    const t = ad.start_time ? ` @ ${ad.start_time}` : '';
+    return `recurring · ${ad.rec_freq}${day}${t}`;
+  }
+  return 'ongoing';
 }
 
 function writeAdMd(ad: Ad, outDir: string, pagePaths: string[]): string {
@@ -48,6 +71,7 @@ KO: ![${ad.title.ko}](regen-${ad.slug}.ko.png)
 - **Time:** ${ad.time}
 - **Location:** EN: ${ad.location.en} / KO: ${ad.location.ko}
 - **Category:** ${ad.category_key}
+- **Schedule:** ${formatSchedule(ad)}
 - **Featured:** ${ad.featured}
 - **Primary (hero):** ${ad.primary}
 

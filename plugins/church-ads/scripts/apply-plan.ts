@@ -37,6 +37,35 @@ interface Ad {
   description: { en: string; ko: string };
   full_description: { en: string; ko: string };
   links: { label: string; url: string }[];
+  // Optional schedule metadata (present on ads processed after 2026-07-20).
+  schedule_kind?: 'once' | 'recurring' | 'ongoing';
+  start_date?: string;
+  end_date?: string;
+  start_time?: string;
+  end_time?: string;
+  rec_freq?: 'weekly' | 'biweekly' | 'monthly' | 'none';
+  rec_weekday?: number;
+}
+
+// Build the Sanity `schedule.*` fields from an ad's derived schedule metadata.
+// Returns partial doc fields to merge; empty object if the ad has no schedule data.
+function scheduleFields(ad: Ad): Record<string, unknown> {
+  if (!ad.schedule_kind) return {};
+  const out: Record<string, unknown> = { scheduleKind: ad.schedule_kind };
+  if (ad.schedule_kind === 'once') {
+    if (ad.start_date) out.startDate = ad.start_date;
+    if (ad.end_date || ad.start_date) out.endDate = ad.end_date || ad.start_date;
+    if (ad.start_time) out.startTime = ad.start_time;
+    if (ad.end_time) out.endTime = ad.end_time;
+  } else if (ad.schedule_kind === 'recurring' && ad.rec_freq && ad.rec_freq !== 'none') {
+    const rec: Record<string, unknown> = { freq: ad.rec_freq };
+    if (typeof ad.rec_weekday === 'number' && ad.rec_weekday >= 0) rec.weekday = ad.rec_weekday;
+    out.recurrence = rec;
+    if (ad.start_time) out.startTime = ad.start_time;
+    if (ad.end_time) out.endTime = ad.end_time;
+  }
+  // 'ongoing' -> just scheduleKind
+  return out;
 }
 
 interface PlanEntry {
@@ -195,6 +224,7 @@ async function main() {
       })),
     };
     if (entry.publish_end_date) doc.publishEndDate = entry.publish_end_date;
+    Object.assign(doc, scheduleFields(ad));
 
     if (entry.action === 'new') {
       const id = `event-${ad.slug}`;
