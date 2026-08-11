@@ -14,12 +14,12 @@
  * Usage:
  *   bun run audit-qr-codes.ts --studio-env <studio/.env> [--out <report.md>]
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { createClient } from '@sanity/client';
 import sharp from 'sharp';
-import jsQR from 'jsqr';
+// NB: no jsqr import. zbar is the decoder — see decodeQR() below for why.
 
 function loadEnv(envPath: string): void {
   if (!existsSync(envPath)) return;
@@ -58,25 +58,31 @@ async function fetchImage(url: string): Promise<Buffer | null> {
   }
 }
 
+/**
+ * Decode with zbar, NOT jsQR.
+ *
+ * This function used to loop jsQR over three scales with attemptBoth inversion.
+ * It undercounted by more than half: on the extracted slide corpus jsQR found 8
+ * QR codes across 54 images where zbarimg finds 19 across 46. jsQR cannot read
+ * photographed or projected slides, which is every slide here — and a false
+ * "no QR" is the failure that caused placeholder example.com links to ship.
+ */
 async function decodeQR(buf: Buffer): Promise<string | null> {
-  // Try multiple sizes — QR scanners are sensitive to scale
-  for (const width of [800, 1200, 1600]) {
-    try {
-      const { data, info } = await sharp(buf)
-        .resize({ width, withoutEnlargement: true })
-        .ensureAlpha()
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-      const code = jsQR(new Uint8ClampedArray(data), info.width, info.height, {
-        inversionAttempts: 'attemptBoth',
-      });
-      if (code?.data) return code.data;
-    } catch {
-      // try next size
-    }
+  const tmp = join(tmpdir(), `qraudit-${process.pid}-${counter++}.png`);
+  try {
+    await sharp(buf).png().toFile(tmp);
+    // zbarimg exits 4 when an image simply has no barcode — not an error.
+    const proc = Bun.spawnSync(['zbarimg', '-q', '--raw', tmp], { stderr: 'ignore' });
+    const out = new TextDecoder().decode(proc.stdout).split('\n')[0]?.trim();
+    if (out) return out;
+  } catch {
+    // fall through
+  } finally {
+    try { unlinkSync(tmp); } catch { /* already gone */ }
   }
   return null;
 }
+let counter = 0;
 
 function normalizeUrl(s: string): string {
   if (!s) return s;
@@ -201,33 +207,61 @@ async function main() {
   }
   lines.push('');
 
-  // Link backfill: events with QR URL not in links[]
-  lines.push('## Link backfill (QR URL missing from links[])');
-  lines.push('');
+  // A QR URL that isn't in links[] splits into two very different cases, and
+  // conflating them is dangerous. When links[] is EMPTY the baked QR is the only
+  // route to the form, so copying it in is a safe backfill. When links[] already
+  // holds a DIFFERENT url, the baked QR is just as likely to be the wrong one --
+  // a reused slide image carrying a stale code. Seen live: both CommonGround
+  // events shipped the same baked QR (the Encourager form) while their links[]
+  // correctly pointed at their own separate Receiver/Encourager forms. Blindly
+  // "backfilling" there would have sent Receiver sign-ups to the wrong form.
   const evtMap = new Map(events.map((e) => [e._id, e]));
   const backfills: { eventId: string; title: string; qrUrl: string }[] = [];
+  const conflicts: { eventId: string; title: string; qrUrl: string; existing: string[] }[] = [];
+  const seen = new Set<string>();
   for (const h of hits) {
     if (!isUrl(h.qrText)) continue;
+    const key = `${h.eventId}|${normalizeUrl(h.qrText)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const evt = evtMap.get(h.eventId);
-    const existing = (evt?.links || []).map((l) => normalizeUrl(l.url));
-    const norm = normalizeUrl(h.qrText);
-    if (!existing.includes(norm)) {
+    const links = evt?.links || [];
+    const existing = links.map((l) => normalizeUrl(l.url));
+    if (existing.includes(normalizeUrl(h.qrText))) continue; // already covered
+    if (links.length === 0) {
       backfills.push({ eventId: h.eventId, title: h.eventTitle, qrUrl: h.qrText });
+    } else {
+      conflicts.push({
+        eventId: h.eventId, title: h.eventTitle, qrUrl: h.qrText,
+        existing: links.map((l) => l.url),
+      });
     }
   }
-  // Dedup by event+url
-  const seen = new Set<string>();
-  const unique = backfills.filter((b) => {
-    const key = `${b.eventId}|${normalizeUrl(b.qrUrl)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  if (unique.length === 0) {
-    lines.push('_None — every detected QR URL is already in its event\'s links[]._');
+
+  lines.push('## Link backfill (safe: links[] is empty, baked QR is the only route)');
+  lines.push('');
+  if (backfills.length === 0) {
+    lines.push('_None._');
   } else {
-    for (const b of unique) {
+    for (const b of backfills) {
       lines.push(`- \`${b.eventId}\` — **${b.title}** -> \`${b.qrUrl}\``);
+    }
+  }
+  lines.push('');
+
+  lines.push('## Conflicts — DO NOT auto-apply, verify which URL is right');
+  lines.push('');
+  if (conflicts.length === 0) {
+    lines.push('_None._');
+  } else {
+    lines.push('The baked QR disagrees with the existing links[]. The QR is often the');
+    lines.push('stale one (a reused slide image). Open both and compare the form titles');
+    lines.push('before changing anything; prefer regenerating the image without a QR.');
+    lines.push('');
+    for (const c of conflicts) {
+      lines.push(`- \`${c.eventId}\` — **${c.title}**`);
+      lines.push(`  - baked QR: \`${c.qrUrl}\``);
+      lines.push(`  - links[]:  ${c.existing.map((u) => `\`${u}\``).join(', ')}`);
     }
   }
   lines.push('');
