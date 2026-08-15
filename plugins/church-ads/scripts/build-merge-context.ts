@@ -34,6 +34,7 @@ interface Ad {
   description: { en: string; ko: string };
   full_description: { en: string; ko: string };
   category_key: string;
+  also_show_in?: string[];
   transcript_chunk: string;
 }
 
@@ -46,9 +47,18 @@ interface ExistingEvent {
   description?: { en?: string; ko?: string };
   fullDescription?: { en?: string; ko?: string };
   category?: { key?: string };
+  // `alsoShowIn[]->` yields null when the field is absent (not []), and a null
+  // ENTRY for any dangling reference — both shapes have to survive rendering.
+  alsoShowIn?: ({ key?: string } | null)[] | null;
   featured?: boolean;
   primary?: boolean;
   publishEndDate?: string;
+}
+
+/** Extra-category keys as a display string; '' when there are none. */
+function extraKeys(refs: ExistingEvent['alsoShowIn']): string {
+  if (!Array.isArray(refs)) return '';
+  return refs.map((r) => r?.key || '_(dangling ref)_').join(', ');
 }
 
 function eventBlock(evt: ExistingEvent): string {
@@ -61,6 +71,8 @@ function eventBlock(evt: ExistingEvent): string {
   lines.push(`- **Time:** ${evt.time || '_(none)_'}`);
   lines.push(`- **Location:** EN: ${evt.location?.en || '_(none)_'} / KO: ${evt.location?.ko || '_(none)_'}`);
   lines.push(`- **Category:** ${evt.category?.key || '_(none)_'}`);
+  const extras = extraKeys(evt.alsoShowIn);
+  if (extras) lines.push(`- **Also shows in:** ${extras}`);
   const flags: string[] = [];
   if (evt.featured) flags.push('featured');
   if (evt.primary) flags.push('HERO');
@@ -90,6 +102,7 @@ function adBlock(ad: Ad): string {
   lines.push(`- **Time:** ${ad.time}`);
   lines.push(`- **Location:** EN: ${ad.location.en} / KO: ${ad.location.ko}`);
   lines.push(`- **Category:** ${ad.category_key}`);
+  if (ad.also_show_in?.length) lines.push(`- **Also shows in:** ${ad.also_show_in.join(', ')}`);
   lines.push(`- **Description (EN):** ${ad.description.en}`);
   lines.push('');
   lines.push(`<details><summary>Full description (EN)</summary>`);
@@ -140,6 +153,7 @@ async function main() {
   const existing = (await client.fetch(`*[_type == "event"] | order(_id) {
     _id, title, date, time, location, description, fullDescription,
     "category": category->{ "key": key },
+    "alsoShowIn": alsoShowIn[]->{ "key": key },
     featured, primary, publishEndDate
   }`)) as ExistingEvent[];
   console.log(`  ${existing.length} existing events`);
@@ -167,6 +181,16 @@ async function main() {
   lines.push('- **Past events** in existing data — if existing event\'s date is past and new ad is for a future similar topic, lean toward `merge` (refresh the document) only if the same series/cadence; otherwise `new`.');
   lines.push('- **Different scope** (e.g. golf tournament vs men\'s general gathering) — separate events even if related ministry.');
   lines.push('- **Same topic, different date** without recurring pattern — usually `new`.');
+  lines.push('');
+  lines.push('## Categories');
+  lines.push('');
+  lines.push('`Category` is the single primary — the badge shown on the card. `Also shows in` lists extra');
+  lines.push('categories that ONLY widen which filter chips list the event; there is no hierarchy, so');
+  lines.push('`general` does not imply `adult` or `college`.');
+  lines.push('');
+  lines.push('An existing `Also shows in` was usually curated by a pastor in Studio. `apply-plan.ts` carries');
+  lines.push('it over on both `new` and `merge` unless the ad itself names extras, so merging does not lose it.');
+  lines.push('If an ad\'s extras look wrong, fix `also_show_in` in `raw/segments.json` (snake_case) — not here.');
   lines.push('');
   lines.push('---');
   lines.push('');

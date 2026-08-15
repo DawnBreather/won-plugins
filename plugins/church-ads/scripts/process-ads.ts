@@ -87,11 +87,20 @@ async function transcribe(voicePath: string, openai: OpenAI): Promise<string> {
 
 // ------------- phase 2: segment + translate -------------
 
+type CategoryKey = 'college' | 'youngAdult' | 'adult' | 'newcomer' | 'specialEvents' | 'general';
+
+const CATEGORY_KEYS: CategoryKey[] = [
+  'college', 'youngAdult', 'adult', 'newcomer', 'specialEvents', 'general',
+];
+
 interface AdSegment {
   index: number;
   slug: string;
   page_indices: number[];
-  category_key: 'college' | 'youngAdult' | 'adult' | 'newcomer' | 'specialEvents' | 'general';
+  category_key: CategoryKey;
+  // Extra categories whose filter chip should also list this event. Optional:
+  // Gemini emits [] when the slide names only one audience.
+  also_show_in?: CategoryKey[];
   title: { en: string; ko: string };
   date: string;
   time: string;
@@ -124,7 +133,12 @@ Task:
 - For each ad, output the JSON schema below
 - All text fields MUST be bilingual: { en, ko }
 - Use church-appropriate Korean (예배, 말씀, 교제, 묵상, 큐티, 헌금)
-- Map to one of these categories: college, youngAdult, adult, newcomer, specialEvents, general
+- "category_key" is the ONE primary category, shown as the badge on the event card. Choose from: college, youngAdult, adult, newcomer, specialEvents, general
+- "also_show_in" is an OPTIONAL list of EXTRA categories from that same list, used only to widen which filter chips list the event. Rules:
+  - Add a key ONLY when the slide or transcript actually says that audience is invited (e.g. "College & Young Adults welcome", "open to all ministries", a Korean line naming 대학부 AND 청년부).
+  - Otherwise return an EMPTY array. Do not guess an audience from the topic, and do not pad the list.
+  - Never repeat "category_key" in it.
+  - There is NO hierarchy: "general" does NOT imply "adult" or "college", and a college event is NOT automatically "youngAdult". A chip lists exactly the events tagged with that chip.
 - Title slug: kebab-case, English, descriptive (e.g. "amazing-touch", "30-days-of-worship")
 - "regen_prompt" is { en, ko } — TWO separate prompts for nano-banana image regen, one per language. Each describes a CLEAN church announcement slide IN THAT LANGUAGE ONLY (English-only OR Korean-only, never mixed). Preserve ALL factual info (dates, times, locations, fees, URLs). No glare, no skew. Photographic quality. 16:9. The visual layout/style should match between en and ko versions.
 - "transcript_chunk" is verbatim from the transcript (the part of the audio related to this specific ad)
@@ -168,7 +182,11 @@ async function segmentWithGemini(
                 index: { type: 'integer' },
                 slug: { type: 'string' },
                 page_indices: { type: 'array', items: { type: 'integer' } },
-                category_key: { type: 'string' },
+                category_key: { type: 'string', enum: CATEGORY_KEYS },
+                // Optional and NOT in `required`: an unused enum member cannot be
+                // '' (Gemini's validator rejects an empty string inside an enum),
+                // so "no extra audience" is the empty array.
+                also_show_in: { type: 'array', items: { type: 'string', enum: CATEGORY_KEYS } },
                 title: bilingual(),
                 date: { type: 'string' },
                 time: { type: 'string' },
@@ -241,6 +259,12 @@ function formatSchedule(ad: AdSegment): string {
   return 'ongoing';
 }
 
+// Always rendered, even when empty: the per-ad MD is the human review gate, and a
+// field that only appears when populated cannot be spotted as wrongly missing.
+function formatAlsoShowIn(ad: AdSegment): string {
+  return ad.also_show_in?.length ? ad.also_show_in.join(', ') : '(none)';
+}
+
 function writeAdMd(ad: AdSegment, outDir: string, pagePaths: string[]): string {
   const num = String(ad.index).padStart(2, '0');
   const filename = `${num}-${ad.slug}.md`;
@@ -261,7 +285,8 @@ KO: ![${ad.title.ko}](regen-${ad.slug}.ko.png)
 - **Date:** ${ad.date}
 - **Time:** ${ad.time}
 - **Location:** EN: ${ad.location.en} / KO: ${ad.location.ko}
-- **Category:** ${ad.category_key}
+- **Category (primary badge):** ${ad.category_key}
+- **Also shows in (extra filter chips):** ${formatAlsoShowIn(ad)}
 - **Schedule:** ${formatSchedule(ad)}
 - **Featured:** ${ad.featured}
 - **Primary (hero):** ${ad.primary}

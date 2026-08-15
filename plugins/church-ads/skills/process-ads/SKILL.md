@@ -122,7 +122,8 @@ KO: ![{Title}](regen-{slug}.ko.png)
 - **Date:** ...
 - **Time:** ...
 - **Location:** EN: ... / KO: ...
-- **Category:** ...
+- **Category (primary badge):** ...
+- **Also shows in (extra filter chips):** ...
 ```
 
 ### 5. Report to user
@@ -131,13 +132,29 @@ Summarize: N ads found, M slides extracted, voice memo duration, regen image cou
 
 ## Categories (Sanity refs)
 
-Map ads to existing category keys when generating segments.json:
-- `college` / 대학부
-- `youngAdult` / 청년부
-- `adult` / 장년부
-- `newcomer` / 새가족
-- `specialEvents` / 특별 행사
-- `general` / 전체
+Six keys exist. Every ad gets exactly ONE primary plus, optionally, a few extras:
+
+| Key | Korean |
+|-----|--------|
+| `college` | 대학부 |
+| `youngAdult` | 청년부 |
+| `adult` | 장년부 |
+| `newcomer` | 새가족 |
+| `specialEvents` | 특별 행사 |
+| `general` | 전체 |
+
+- **`category_key`** (required, one key) — the PRIMARY. It is the badge printed on the event card, so it must be the audience the slide is actually addressed to.
+- **`also_show_in`** (optional array of keys) — EXTRAS. They change nothing visible on the card; they only widen which filter chips list the event. Empty array is the normal case.
+
+Rules, in `segments.json` and in any hand edit:
+
+- **snake_case: `also_show_in`.** A camelCase `alsoShowIn` is never read by `apply-plan.ts`; both spellings would sit in the same object and the stale value publishes. `validate-segments.ts` fails the run on it.
+- **Add an extra only when the slide or transcript says that audience is invited** ("College & Young Adults welcome", a Korean line naming both 대학부 and 청년부, "all ministries"). Do not infer an audience from the topic.
+- **Never repeat the primary** in `also_show_in` — the site dedupes so nothing breaks visibly, but Studio's `unique()` rule then shows a pastor a red error on a field they never edited. This is an ERROR in the validator.
+- **No cascade, no hierarchy.** `general` does NOT imply `adult` or `college`; a college event is NOT automatically `youngAdult`. A chip lists exactly the events tagged with that chip, and nothing is added by implication.
+- **A key with no category document behind it is not an error at write time.** Sanity accepts a dangling `_ref`, and the site's `alsoShowIn[]->` resolves it to a null ENTRY inside the array — the chip just never lists the event. Only `validate-segments.ts` (offline, six keys hardcoded) and `apply-plan.ts` (against the live category list) catch it.
+
+Both the per-ad MD and `MERGE_CONTEXT.md` print `Also shows in`, always, even when empty — so a wrong or missing extra is visible to a human reviewer before the push.
 
 ## Gotchas
 

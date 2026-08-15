@@ -14,6 +14,7 @@ interface Ad {
   slug: string;
   page_indices: number[];
   category_key: string;
+  also_show_in?: string[];
   title: { en: string; ko: string };
   date: string;
   time: string;
@@ -50,6 +51,13 @@ function formatSchedule(ad: Ad): string {
   return 'ongoing';
 }
 
+// Always rendered, even when empty — this MD is the human review gate, and a field
+// that only appears when populated cannot be spotted as wrongly missing.
+// Must stay in sync with process-ads.ts formatAlsoShowIn().
+function formatAlsoShowIn(ad: Ad): string {
+  return ad.also_show_in?.length ? ad.also_show_in.join(', ') : '(none)';
+}
+
 function writeAdMd(ad: Ad, outDir: string, pagePaths: string[]): string {
   const num = String(ad.index).padStart(2, '0');
   const filename = `${num}-${ad.slug}.md`;
@@ -70,7 +78,8 @@ KO: ![${ad.title.ko}](regen-${ad.slug}.ko.png)
 - **Date:** ${ad.date}
 - **Time:** ${ad.time}
 - **Location:** EN: ${ad.location.en} / KO: ${ad.location.ko}
-- **Category:** ${ad.category_key}
+- **Category (primary badge):** ${ad.category_key}
+- **Also shows in (extra filter chips):** ${formatAlsoShowIn(ad)}
 - **Schedule:** ${formatSchedule(ad)}
 - **Featured:** ${ad.featured}
 - **Primary (hero):** ${ad.primary}

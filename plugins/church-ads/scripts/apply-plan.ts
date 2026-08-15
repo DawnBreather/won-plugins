@@ -9,6 +9,11 @@
  * Hero exclusivity: clears `primary` on all other events before setting a new
  * one — same logic as the Studio publish action.
  *
+ * Categories: `category` is the single primary (the badge on every card);
+ * `alsoShowIn` is an optional list of extra categories that only widens which
+ * filter chips list the event. Both write paths destroy the whole document, so
+ * an existing `alsoShowIn` is read back and re-sent unless the ad names its own.
+ *
  * Usage:
  *   bun run apply-plan.ts --out <YYYYMMDD.church-ads dir> --studio-env <path to studio/.env>
  */
@@ -30,6 +35,11 @@ interface Ad {
   index: number;
   slug: string;
   category_key: string;
+  // Extra categories this ad should ALSO appear under in the site's filter chips.
+  // snake_case like every other key here: a camelCase `alsoShowIn` in segments.json
+  // would sit next to this one, never be read, and the omission would look
+  // deliberate (three events shipped 2020 dates that way on 2026-08-09).
+  also_show_in?: string[];
   title: { en: string; ko: string };
   date: string;
   time: string;
@@ -45,6 +55,110 @@ interface Ad {
   end_time?: string;
   rec_freq?: 'weekly' | 'biweekly' | 'monthly' | 'none';
   rec_weekday?: number;
+}
+
+type CategoryRef = { _type: 'reference'; _ref: string };
+type KeyedCategoryRef = CategoryRef & { _key: string };
+
+/**
+ * A reference to the category document, by its REAL `_id`.
+ *
+ * The six seeded documents happen to be `category-<key>` because
+ * studio/migrate-categories.mjs set those ids explicitly; nothing in the schema
+ * pins them. A category added through Studio gets a random uuid, so deriving
+ * `category-${key}` from a valid key produces a dangling reference that passes
+ * every key check and then resolves to a null ENTRY in `alsoShowIn[]->` -- a
+ * missing chip, not an error. Resolve, never derive.
+ */
+function categoryRef(key: string, idByKey: Map<string, string>): CategoryRef {
+  const id = idByKey.get(key);
+  if (!id) throw new Error(`No category document for key "${key}" (resolve step should have caught this)`);
+  return { _type: 'reference', _ref: id };
+}
+
+/**
+ * `alsoShowIn` refs for an ad, or null when the ad says nothing about extras.
+ *
+ * The primary `category` is the badge every card shows; `alsoShowIn` only widens
+ * which filter chips list the event. There is NO hierarchy: `general` does not
+ * imply `adult`/`college`, so nothing is added here by implication — a chip lists
+ * exactly the events tagged with that chip.
+ *
+ * Dedupes and drops the primary. GROQ does not dedupe, so a repeated key really
+ * does come back twice; the site's mergeCategories collapses that, so nothing
+ * breaks visibly -- but the duplicate then trips Studio's `unique()` rule, showing
+ * a pastor a red error on a field they never touched.
+ */
+function alsoShowInRefs(ad: Ad, idByKey: Map<string, string>): KeyedCategoryRef[] | null {
+  // Absent OR empty means "the slide said nothing about extra audiences", not
+  // "delete what the pastor curated in Studio" — Gemini emits [] freely for an
+  // optional array, and treating that as an instruction would wipe curation on
+  // every re-announcement. Clearing extras is a Studio edit, not a pipeline one.
+  if (!Array.isArray(ad.also_show_in) || ad.also_show_in.length === 0) return null;
+  const seen = new Set<string>([ad.category_key]);
+  const out: KeyedCategoryRef[] = [];
+  for (const key of ad.also_show_in) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...categoryRef(key, idByKey), _key: `also-${key}` });
+  }
+  return out.length ? out : null;
+}
+
+/**
+ * Resolve every category key an ad needs to a real document `_id`, failing before
+ * the first write if any key has no document behind it.
+ *
+ * The Sanity API validates nothing, so a typo'd key is accepted and stored as a
+ * dangling `_ref`; `alsoShowIn[]->` then resolves it to a null ENTRY inside the
+ * array, which reads as a missing chip rather than as an error. Queried live
+ * instead of hardcoded so a seventh category does not break the push, and the ids
+ * come from the same query so they cannot be guessed wrong.
+ */
+async function resolveCategoryIds(
+  client: ReturnType<typeof createClient>,
+  ads: Ad[],
+): Promise<Map<string, string>> {
+  const rows = await client.fetch<{ key: string; id: string }[]>(
+    `*[_type == "category"]{ key, "id": _id }`,
+  );
+  const idByKey = new Map(rows.map((r) => [r.key, r.id]));
+  const valid = new Set(idByKey.keys());
+  const bad: string[] = [];
+  for (const ad of ads) {
+    if (!valid.has(ad.category_key)) bad.push(`ad ${ad.index} (${ad.slug}): category_key "${ad.category_key}"`);
+    for (const key of ad.also_show_in ?? []) {
+      if (!valid.has(key)) bad.push(`ad ${ad.index} (${ad.slug}): also_show_in "${key}"`);
+    }
+  }
+  if (bad.length) {
+    throw new Error(
+      `Unknown category key(s) — would become a dangling reference:\n  ${bad.join('\n  ')}\n` +
+        `Valid keys: ${[...valid].sort().join(', ')}`,
+    );
+  }
+  return idByKey;
+}
+
+/**
+ * The `alsoShowIn` already on the target document, so a re-announcement cannot
+ * drop it. `createOrReplace` REPLACES the whole document, and the merge path is a
+ * full `.set()` overwrite (the one that nearly wiped the Parking Team's leader
+ * phone numbers), so extras a pastor curated in Studio have to be read back and
+ * re-sent explicitly.
+ *
+ * Reads the PUBLISHED document, which is also what both write paths target. An
+ * unpublished draft keeps its own copy of the field and shadows this on publish.
+ */
+async function existingAlsoShowIn(
+  client: ReturnType<typeof createClient>,
+  id: string,
+): Promise<KeyedCategoryRef[] | null> {
+  const rows = await client.fetch<KeyedCategoryRef[] | null>(
+    `*[_id == $id][0].alsoShowIn`,
+    { id },
+  );
+  return Array.isArray(rows) && rows.length ? rows : null;
 }
 
 // Build the Sanity `schedule.*` fields from an ad's derived schedule metadata.
@@ -153,6 +267,14 @@ async function main() {
   };
   const adByIndex = new Map(ads.map((a) => [a.index, a]));
 
+  // Gate every key that is about to be written, before the first mutation — a
+  // skipped ad's typo must not block the push, and a half-applied plan is worse
+  // than a rejected one.
+  const categoryIdByKey = await resolveCategoryIds(
+    client,
+    plan.filter((p) => p.action !== 'skip').flatMap((p) => adByIndex.get(p.ad_index) ?? []),
+  );
+
   const newHero = plan.find((p) => p.primary && p.action !== 'skip');
   if (newHero) {
     console.log('Clearing primary=true on all other events (new hero incoming)...');
@@ -210,7 +332,7 @@ async function main() {
       date: ad.date,
       time: ad.time,
       location: ad.location,
-      category: { _type: 'reference', _ref: `category-${ad.category_key}` },
+      category: categoryRef(ad.category_key, categoryIdByKey),
       description: ad.description,
       fullDescription: ad.full_description,
       images,
@@ -226,13 +348,45 @@ async function main() {
     if (entry.publish_end_date) doc.publishEndDate = entry.publish_end_date;
     Object.assign(doc, scheduleFields(ad));
 
+    const targetId = entry.action === 'new' ? `event-${ad.slug}` : entry.action.merge;
+
+    // Extras are a UNION of what is already on the target and what the ad names.
+    // Not "the ad wins": a slide that mentions one audience is not an instruction
+    // to delete the others, and both write paths here replace the whole field
+    // (createOrReplace replaces the document; the merge path is a full .set()).
+    // Taking the ad's list verbatim meant a slide saying "college students
+    // welcome" silently dropped the Adult and General chips a pastor had set --
+    // the Parking Team phone-number failure shape again. Removing an extra is a
+    // Studio edit, deliberately not something a weekly slide can do.
+    const fromAd = alsoShowInRefs(ad, categoryIdByKey);
+    const existing = await existingAlsoShowIn(client, targetId);
+    const primaryId = categoryIdByKey.get(ad.category_key);
+    const byRef = new Map<string, KeyedCategoryRef>();
+    for (const ref of [...(existing ?? []), ...(fromAd ?? [])]) {
+      // Drop anything that repeats the primary: it is already the badge, and the
+      // duplicate would only surface as a red unique() error in Studio.
+      if (!ref?._ref || ref._ref === primaryId) continue;
+      if (!byRef.has(ref._ref)) byRef.set(ref._ref, ref);
+    }
+    const alsoShowIn = [...byRef.values()];
+    if (alsoShowIn.length) {
+      doc.alsoShowIn = alsoShowIn;
+      const keyById = new Map([...categoryIdByKey].map(([k, v]) => [v, k]));
+      const keys = alsoShowIn.map((r) => keyById.get(r._ref) ?? r._ref).join(', ');
+      const added = (fromAd ?? []).filter((r) => !(existing ?? []).some((e) => e._ref === r._ref)).length;
+      const kept = alsoShowIn.length - added;
+      console.log(`    alsoShowIn: ${keys}  (${kept} kept, ${added} added by this ad)`);
+    } else if (existing?.length) {
+      // Unreachable unless every existing extra equalled the primary; log it so a
+      // field going empty is never silent.
+      console.log('    alsoShowIn: cleared (every existing extra repeated the primary)');
+    }
+
     if (entry.action === 'new') {
-      const id = `event-${ad.slug}`;
-      const created = { ...doc, _id: id, _type: 'event' as const } as Parameters<typeof client.createOrReplace>[0];
+      const created = { ...doc, _id: targetId, _type: 'event' as const } as Parameters<typeof client.createOrReplace>[0];
       await client.createOrReplace(created);
-      console.log(`  -> createOrReplace ${id}`);
+      console.log(`  -> createOrReplace ${targetId}`);
     } else {
-      const targetId = entry.action.merge;
       // Don't patch _type
       const { _type, ...patch } = doc as { _type?: string };
       void _type;

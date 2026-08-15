@@ -19,6 +19,11 @@
  *                                does not resolve at all. Both were invented.
  *  - dot in a derived _id        A Sanity document id containing `.` is private,
  *                                so a tokenless static build reads zero rows.
+ *  - unknown category key        Nothing validates a `_ref` on write, so a typo'd
+ *                                key is stored as a dangling reference. The site's
+ *                                `alsoShowIn[]->` then resolves it to a null ENTRY
+ *                                inside the array — a chip that quietly never lists
+ *                                the event, with no error anywhere.
  *
  * Usage:
  *   bun run validate-segments.ts --out <YYYYMMDD.church-ads dir> [--check-urls]
@@ -31,7 +36,7 @@ import { join, resolve } from 'node:path';
 // Keys apply-plan.ts / rewrite-mds.ts actually consume. Anything else in an ad
 // object is either dead weight or, worse, a misspelling of one of these.
 const KNOWN_AD_KEYS = new Set([
-  'index', 'slug', 'category_key', 'title', 'date', 'time', 'location',
+  'index', 'slug', 'category_key', 'also_show_in', 'title', 'date', 'time', 'location',
   'description', 'full_description', 'links', 'page_indices', 'regen_prompt',
   'transcript_chunk', 'featured', 'primary',
   'schedule_kind', 'start_date', 'end_date', 'start_time', 'end_time',
@@ -47,7 +52,15 @@ const CAMEL_TRAPS: Record<string, string> = {
   recDayOfMonth: 'rec_day_of_month', fullDescription: 'full_description',
   categoryKey: 'category_key', pageIndices: 'page_indices',
   publishEndDate: 'publish_end_date', regenPrompt: 'regen_prompt',
+  alsoShowIn: 'also_show_in',
 };
+
+// The six category documents that exist in Sanity (`_id` = `category-<key>`).
+// Hardcoded because this gate runs offline, before any token is needed; apply-plan.ts
+// re-checks against the live category list so a seventh category cannot break the push.
+const CATEGORY_KEYS = new Set([
+  'college', 'youngAdult', 'adult', 'newcomer', 'specialEvents', 'general',
+]);
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const KO_WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -125,6 +138,34 @@ async function main() {
       }
       if (slugs.has(ad.slug)) err(`${at}: duplicate slug "${ad.slug}" — one ad would overwrite the other.`);
       slugs.add(ad.slug);
+    }
+
+    // --- categories: the KEY was only ever spell-checked, never valued ---
+    // A bogus key is accepted by the Sanity API and stored as a dangling `_ref`.
+    // The primary then reads as an empty badge; an extra becomes a null entry in
+    // `alsoShowIn[]->` and its chip silently omits the event.
+    const valid = [...CATEGORY_KEYS].join(', ');
+    if (typeof ad.category_key !== 'string' || !CATEGORY_KEYS.has(ad.category_key)) {
+      err(`${at}: category_key "${ad.category_key}" is not a real category. Valid: ${valid}.`);
+    }
+    if (ad.also_show_in !== undefined) {
+      if (!Array.isArray(ad.also_show_in)) {
+        err(`${at}: also_show_in must be an array of category keys, got ${typeof ad.also_show_in}.`);
+      } else {
+        const seen = new Set<string>();
+        for (const k of ad.also_show_in) {
+          if (typeof k !== 'string' || !CATEGORY_KEYS.has(k)) {
+            err(`${at}: also_show_in entry "${k}" is not a real category. Valid: ${valid}.`);
+          } else if (k === ad.category_key) {
+            err(`${at}: also_show_in repeats the primary category "${k}". The primary already ` +
+                `lists the event under that chip; keep extras disjoint from it.`);
+          } else if (seen.has(k)) {
+            err(`${at}: also_show_in lists "${k}" twice. GROQ does not dedupe, so the resolved ` +
+                `array would carry two identical entries.`);
+          }
+          if (typeof k === 'string') seen.add(k);
+        }
+      }
     }
 
     // --- dates: plausible year, and weekday agreeing with the printed text ---

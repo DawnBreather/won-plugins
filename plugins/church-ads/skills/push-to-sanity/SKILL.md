@@ -61,6 +61,9 @@ For each non-skipped ad:
 4. `merge: <id>` -> `patch(id).set(doc)` — preserves `_id`
 5. `skip` -> nothing
 6. If any new ad has `primary: true`, clears `primary` on all other events first (hero exclusivity)
+7. Carries over the target document's existing `alsoShowIn` unless the ad supplies `also_show_in` (see Categories below) — neither write path may drop a curated chip
+
+Before any of that it aborts if a plan entry's `category_key` or `also_show_in` names a category that does not exist.
 
 ## MERGE_PLAN.md format
 
@@ -92,6 +95,18 @@ The apply script parses only the `yaml` blocks. The `reasoning:` paragraphs are 
 | `new` | Create `event-{slug}` |
 | `merge: <_id>` | Overwrite that existing event |
 | `skip` | No-op |
+
+## Categories (Sanity refs)
+
+Each event carries one primary `category` reference plus an optional `alsoShowIn` array of extra references.
+
+- **`category`** is the badge on the card. Written from the ad's `category_key`.
+- **`alsoShowIn`** affects FILTER CHIPS ONLY — it adds no badge and changes nothing else on the card. Written from the ad's optional `also_show_in` (snake_case) array.
+- **No cascade, no hierarchy.** `general` does NOT imply `adult` or `college`. A chip lists exactly the events tagged with that chip; membership is never inherited or implied.
+- **Extras a pastor curated in Studio are preserved.** `apply-plan.ts` reads the target document's `alsoShowIn` and re-sends it on BOTH paths unless the ad names its own extras — necessary because `createOrReplace` replaces the whole document and `merge` is a full `.set()`. Absent or empty `also_show_in` means "the slide said nothing", not "clear the field"; Gemini emits `[]` freely, so treating it as an instruction would wipe curation on every re-announcement. To ADD or change extras from this pipeline, edit `also_show_in` in `raw/segments.json` (then re-run `validate-segments.ts` and `rewrite-mds.ts`) — `MERGE_PLAN.md` has no key for it. To REMOVE one, edit the event in Studio.
+- **A typo'd key is a dangling `_ref`, not an error.** Sanity validates nothing on write, and `alsoShowIn[]->` resolves a dangling ref to a null ENTRY inside the array — the chip silently omits the event. `apply-plan.ts` therefore checks every `category_key` and `also_show_in` entry against the live `*[_type=="category"].key` list and aborts BEFORE the first write, so a bad key cannot half-apply a plan. `validate-segments.ts` catches the same thing offline.
+
+`MERGE_CONTEXT.md` prints `Also shows in` for every existing event (and for any ad that has extras), so the merge decision is made with the curated data visible. A dangling ref renders as `_(dangling ref)_`.
 
 ## Multi-image support
 
@@ -137,10 +152,10 @@ Sign-up actions live in the event's `links[]` (each `{ label, url }`), NOT as a 
 - **Image upload is one-shot** — re-running the apply step uploads new asset instances. Don't loop.
 - **Korean text quality**: review per-ad MD output before applying; machine translations sometimes miss church terminology.
 - **`publishEndDate` filter is build-time**: changes only take effect after next rebuild (auto-cron at 11:00 UTC = 04:00 PT, or manual hook).
-- **Merge does a full `.set()` overwrite** — it replaces every field on the target event with the new ad's content. Before choosing `merge`, check the existing event isn't RICHER (e.g. has contact phone numbers the new slide lacks); if so, `skip` to avoid regressing it.
+- **Merge does a full `.set()` overwrite** — it replaces every field on the target event with the new ad's content. Before choosing `merge`, check the existing event isn't RICHER (e.g. has contact phone numbers the new slide lacks); if so, `skip` to avoid regressing it. `alsoShowIn` is the one field explicitly carried over rather than overwritten; nothing else is, so `MERGE_CONTEXT.md` is still where you check for richer existing content.
 - **Re-apply is idempotent for `new` ads** — `createOrReplace` on `_id = event-{slug}` updates in place, so if you spot an error after publishing (bad date, typo), fix segments.json + re-run regen-images.ts + rewrite-mds.ts, then re-run apply-plan.ts. No duplicate is created. (Only caveat: each run uploads fresh image assets — don't loop needlessly.)
 - **Slides can contain factual typos** — OCR carries them through verbatim. A final human read catches them (e.g. a printed "2025" that should be "2026"). When corrected, the date/fact lives in THREE places per language: description, full_description, AND the regenerated image (text is baked in) — fix segments.json and regenerate the image, don't just patch the text.
-- **GATE: run `validate-segments.ts` before `apply-plan.ts`.** It exits non-zero and blocks the push on every failure class that has actually shipped from this pipeline — camelCase keys that are silently never read, implausible invented years, a date whose weekday contradicts the printed `(Fri)`/`매주 월`, `example.com` placeholder links, a dot in a slug (which makes the Sanity doc private), and duplicate slugs. Add `--check-urls` to also require every http(s) link to resolve.
+- **GATE: run `validate-segments.ts` before `apply-plan.ts`.** It exits non-zero and blocks the push on every failure class that has actually shipped from this pipeline — camelCase keys that are silently never read, implausible invented years, a date whose weekday contradicts the printed `(Fri)`/`매주 월`, `example.com` placeholder links, a dot in a slug (which makes the Sanity doc private), duplicate slugs, and a `category_key`/`also_show_in` key with no category document behind it (which becomes a dangling `_ref`, then a null entry in the resolved array). Add `--check-urls` to also require every http(s) link to resolve.
   ```bash
   export PATH="$HOME/.local/share/mise/installs/bun/latest/bin:/opt/homebrew/bin:$PATH"
   cd ~/.claude/plugins/marketplaces/won-plugins/plugins/church-ads
