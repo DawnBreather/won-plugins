@@ -48,7 +48,8 @@ interface Ad {
   full_description: { en: string; ko: string };
   links: { label: string; url: string; end_date?: string }[];
   // Optional schedule metadata (present on ads processed after 2026-07-20).
-  schedule_kind?: 'once' | 'recurring' | 'ongoing';
+  schedule_kind?: 'once' | 'sessions' | 'recurring' | 'ongoing';
+  sessions?: { date: string; start_time?: string; end_time?: string }[];
   start_date?: string;
   end_date?: string;
   start_time?: string;
@@ -166,7 +167,19 @@ async function existingAlsoShowIn(
 function scheduleFields(ad: Ad): Record<string, unknown> {
   if (!ad.schedule_kind) return {};
   const out: Record<string, unknown> = { scheduleKind: ad.schedule_kind };
-  if (ad.schedule_kind === 'once') {
+  if (ad.schedule_kind === 'sessions') {
+    // Only the listed meetings; no span. A start/end range would make the
+    // calendar paint the empty days between meetings.
+    out.sessions = (ad.sessions ?? [])
+      .filter((x) => x.date)
+      .map((x, i) => ({
+        _type: 'session',
+        _key: `session-${i}`,
+        date: x.date,
+        ...(x.start_time ? { startTime: x.start_time } : {}),
+        ...(x.end_time ? { endTime: x.end_time } : {}),
+      }));
+  } else if (ad.schedule_kind === 'once') {
     if (ad.start_date) out.startDate = ad.start_date;
     if (ad.end_date || ad.start_date) out.endDate = ad.end_date || ad.start_date;
     if (ad.start_time) out.startTime = ad.start_time;

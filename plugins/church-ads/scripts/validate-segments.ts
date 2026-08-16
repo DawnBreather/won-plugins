@@ -40,7 +40,7 @@ const KNOWN_AD_KEYS = new Set([
   'description', 'full_description', 'links', 'page_indices', 'regen_prompt',
   'transcript_chunk', 'featured', 'primary',
   'schedule_kind', 'start_date', 'end_date', 'start_time', 'end_time',
-  'rec_freq', 'rec_weekday', 'rec_anchor_date', 'rec_day_of_month',
+  'rec_freq', 'rec_weekday', 'rec_anchor_date', 'rec_day_of_month', 'sessions',
   'note', 'publish_end_date',
 ]);
 
@@ -193,6 +193,38 @@ async function main() {
     // --- schedule shape ---
     if (ad.schedule_kind === 'once' && !ad.start_date) {
       err(`${at}: schedule_kind "once" needs a start_date.`);
+    }
+    if (ad.schedule_kind === 'sessions') {
+      const list = Array.isArray(ad.sessions) ? ad.sessions : [];
+      if (!list.length) {
+        err(`${at}: schedule_kind "sessions" needs a non-empty sessions list.`);
+      }
+      const seen = new Set<string>();
+      for (const [i, sess] of list.entries()) {
+        const wh = `${at}: sessions[${i}]`;
+        if (!sess?.date || !/^\d{4}-\d{2}-\d{2}$/.test(sess.date)) {
+          err(`${wh} needs a YYYY-MM-DD date (got ${JSON.stringify(sess?.date)}).`);
+          continue;
+        }
+        if (seen.has(sess.date)) warn(`${wh}: duplicate date ${sess.date}.`);
+        seen.add(sess.date);
+        for (const k of ['start_time', 'end_time'] as const) {
+          const v = (sess as Record<string, unknown>)[k];
+          if (v && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(v))) {
+            err(`${wh}: ${k}="${String(v)}" is not 24-hour HH:MM.`);
+          }
+        }
+      }
+      // A span alongside sessions is dead weight AND a contradiction: apply-plan
+      // writes only the sessions, so the span silently means nothing.
+      if (ad.start_date || ad.end_date) {
+        warn(`${at}: sessions ad also has start_date/end_date — apply-plan ignores them ` +
+             `for "sessions", so they are dead. The dates live in sessions[].`);
+      }
+      if (ad.start_time) {
+        warn(`${at}: sessions ad has a schedule-level start_time "${ad.start_time}" — ignored. ` +
+             `Per-day times belong on each sessions[] entry.`);
+      }
     }
     if (ad.schedule_kind === 'recurring') {
       if (!ad.rec_freq || ad.rec_freq === 'none') {

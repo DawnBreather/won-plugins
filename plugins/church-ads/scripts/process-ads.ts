@@ -113,12 +113,15 @@ interface AdSegment {
   featured: boolean;
   primary: boolean;
   // Machine-readable schedule (mirrors the Sanity `schedule` field group).
-  schedule_kind: 'once' | 'recurring' | 'ongoing';
+  schedule_kind: 'once' | 'sessions' | 'recurring' | 'ongoing';
   start_date: string; // YYYY-MM-DD or '' (once only)
   end_date: string; // YYYY-MM-DD or '' (once only)
   start_time: string; // HH:MM 24h or ''
   end_time: string; // HH:MM 24h or ''
   rec_freq: 'weekly' | 'biweekly' | 'monthly' | 'none';
+  // For schedule_kind 'sessions': the discrete meeting dates, each with its own
+  // time. snake_case like every other key here.
+  sessions?: { date: string; start_time?: string; end_time?: string }[];
   rec_weekday: number; // 0=Sun..6=Sat, -1 if n/a
 }
 
@@ -146,7 +149,8 @@ Task:
 - "transcript_chunk" is verbatim from the transcript (the part of the audio related to this specific ad)
 - "featured" defaults true for all (can be tuned later); "primary" defaults false (only one event can be hero, user picks later)
 - SCHEDULE (for the site calendar) — classify each ad:
-  - "schedule_kind": "once" (a specific date/range, e.g. "July 9-10"), "recurring" (repeats: "Every Sunday", "every other Tuesday", "Every Month"), or "ongoing" (no calendar slot: "Ongoing", "All Year Around", open sign-up).
+  - "schedule_kind": "sessions" when the slide lists SEVERAL specific meeting dates that do NOT run continuously (a course over two weekends, a 4-week class). Fill "sessions" with one entry per meeting, each with its own start_time -- this is the ONLY correct shape when the meetings have different times on different days (e.g. Fridays 6 PM, Saturdays 4 PM). Do NOT use a start_date..end_date span for these: the calendar would paint every empty day in between as if there were a meeting. Leave start_date/end_date/start_time empty.
+  - "schedule_kind": "once" (ONE date, or a genuinely continuous run of days like a 10-day trip), "recurring" (repeats: "Every Sunday", "every other Tuesday", "Every Month"), or "ongoing" (no calendar slot: "Ongoing", "All Year Around", open sign-up).
   - For "once": set start_date (YYYY-MM-DD) and end_date (= start_date if single day). Times are Pacific; convert "7 PM" -> "19:00", "4:20-7:00 PM" -> start_time 16:20 end_time 19:00. If the year is not explicit, infer it from context (announcements are for the current/upcoming season).
   - For "recurring": set rec_freq (weekly/biweekly/monthly) and rec_weekday (Sun=0..Sat=6, -1 for monthly). Leave dates empty.
   - For "ongoing": leave dates/recurrence empty (rec_freq "none", rec_weekday -1).
@@ -214,7 +218,19 @@ async function segmentWithGemini(
                 regen_prompt: bilingual(),
                 featured: { type: 'boolean' },
                 primary: { type: 'boolean' },
-                schedule_kind: { type: 'string', enum: ['once', 'recurring', 'ongoing'] },
+                schedule_kind: { type: 'string', enum: ['once', 'sessions', 'recurring', 'ongoing'] },
+                sessions: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      date: { type: 'string', description: 'YYYY-MM-DD' },
+                      start_time: { type: 'string', description: 'HH:MM 24h, or ""' },
+                      end_time: { type: 'string', description: 'HH:MM 24h, or ""' },
+                    },
+                    required: ['date', 'start_time', 'end_time'],
+                  },
+                },
                 start_date: { type: 'string' },
                 end_date: { type: 'string' },
                 start_time: { type: 'string' },
@@ -255,6 +271,12 @@ function bilingual() {
 
 function formatSchedule(ad: AdSegment): string {
   const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  if (ad.schedule_kind === 'sessions') {
+    const list = (ad.sessions ?? [])
+      .map((x) => `${x.date}${x.start_time ? ` @ ${x.start_time}` : ''}`)
+      .join(', ');
+    return `sessions (${ad.sessions?.length ?? 0}) · ${list || '?'}`;
+  }
   if (ad.schedule_kind === 'once') {
     const range = ad.end_date && ad.end_date !== ad.start_date ? `${ad.start_date} -> ${ad.end_date}` : ad.start_date;
     const t = ad.start_time ? ` @ ${ad.start_time}${ad.end_time ? `-${ad.end_time}` : ''}` : '';
