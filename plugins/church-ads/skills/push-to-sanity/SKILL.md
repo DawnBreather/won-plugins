@@ -149,7 +149,7 @@ Sign-up actions live in the event's `links[]` (each `{ label, url }`), NOT as a 
 ## Gotchas
 
 - **`bunx tsc --noEmit`** before running: the apply script uses `@sanity/client` typings.
-- **Image upload is one-shot** — re-running the apply step uploads new asset instances. Don't loop.
+- **Re-applying does NOT duplicate image assets.** Sanity content-addresses uploads: the asset `_ref` embeds the file's SHA1, so a byte-identical re-upload resolves to the same asset id. Verified 2026-08-16 — `shasum -a 1 regen-51st-seattle-father-school.en.png` = `4c07f822...`, and the live ref is `image-4c07f822...-1376x768-jpg`. So a re-apply after a correction is safe (and `new` is `createOrReplace`, so it is idempotent too). Still avoid needless loops — each run re-uploads the bytes and re-renders images through Gemini — but do not skip a needed correction out of fear of orphaned assets.
 - **Korean text quality**: review per-ad MD output before applying; machine translations sometimes miss church terminology.
 - **`publishEndDate` filter is build-time**: changes only take effect after next rebuild (auto-cron at 11:00 UTC = 04:00 PT, or manual hook).
 - **Merge does a full `.set()` overwrite** — it replaces every field on the target event with the new ad's content. Before choosing `merge`, check the existing event isn't RICHER (e.g. has contact phone numbers the new slide lacks); if so, `skip` to avoid regressing it. `alsoShowIn` is the one field explicitly carried over rather than overwritten; nothing else is, so `MERGE_CONTEXT.md` is still where you check for richer existing content.
