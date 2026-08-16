@@ -21,7 +21,7 @@ interface Ad {
   location: { en: string; ko: string };
   description: { en: string; ko: string };
   full_description: { en: string; ko: string };
-  links: { label: string; url: string }[];
+  links: { label: string; url: string; end_date?: string }[];
   transcript_chunk: string;
   regen_prompt: { en: string; ko: string };
   featured: boolean;
@@ -66,7 +66,11 @@ function writeAdMd(ad: Ad, outDir: string, pagePaths: string[]): string {
     .map((i) => `- Slide: [raw/${basename(pagePaths[i - 1])}](raw/${basename(pagePaths[i - 1])})`)
     .join('\n');
   const linksBlock = ad.links.length
-    ? '\n## Links\n\n' + ad.links.map((l) => `- [${l.label}](${l.url})`).join('\n') + '\n'
+    ? '\n## Links\n\n' +
+      ad.links
+        .map((l) => `- [${l.label}](${l.url})${l.end_date ? ` — until ${l.end_date}` : ''}`)
+        .join('\n') +
+      '\n'
     : '';
 
   const body = `# ${ad.title.en} / ${ad.title.ko}

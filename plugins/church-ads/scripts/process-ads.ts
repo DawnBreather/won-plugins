@@ -107,7 +107,7 @@ interface AdSegment {
   location: { en: string; ko: string };
   description: { en: string; ko: string };
   full_description: { en: string; ko: string };
-  links: { label: string; url: string }[];
+  links: { label: string; url: string; end_date?: string }[];
   transcript_chunk: string;
   regen_prompt: { en: string; ko: string };
   featured: boolean;
@@ -141,6 +141,8 @@ Task:
   - There is NO hierarchy: "general" does NOT imply "adult" or "college", and a college event is NOT automatically "youngAdult". A chip lists exactly the events tagged with that chip.
 - Title slug: kebab-case, English, descriptive (e.g. "amazing-touch", "30-days-of-worship")
 - "regen_prompt" is { en, ko } — TWO separate prompts for nano-banana image regen, one per language. Each describes a CLEAN church announcement slide IN THAT LANGUAGE ONLY (English-only OR Korean-only, never mixed). Preserve ALL factual info (dates, times, locations, fees, URLs). No glare, no skew. Photographic quality. 16:9. The visual layout/style should match between en and ko versions.
+- "links" — one entry per ACTION a reader can take. NEVER invent a URL: if a slide shows a QR but no readable text URL, leave the url EMPTY (the operator decodes the QR separately); a plausible-looking made-up link is worse than none. A phone number on the slide becomes a "tel:" link.
+  - Each link also takes "end_date": the date the link stops being useful, e.g. a registration deadline ("sign up by Aug 24", "apply this month" -> the last day of that month). Set it ONLY when the slide or transcript actually states a deadline; otherwise "". This lets a closed form disappear while the announcement itself stays live, so a dead button is never shown.
 - "transcript_chunk" is verbatim from the transcript (the part of the audio related to this specific ad)
 - "featured" defaults true for all (can be tuned later); "primary" defaults false (only one event can be hero, user picks later)
 - SCHEDULE (for the site calendar) — classify each ad:
@@ -197,8 +199,15 @@ async function segmentWithGemini(
                   type: 'array',
                   items: {
                     type: 'object',
-                    properties: { label: { type: 'string' }, url: { type: 'string' } },
-                    required: ['label', 'url'],
+                    properties: {
+                      label: { type: 'string' },
+                      url: { type: 'string' },
+                      end_date: {
+                        type: 'string',
+                        description: 'YYYY-MM-DD the link stops being useful (registration deadline), or "" if none stated',
+                      },
+                    },
+                    required: ['label', 'url', 'end_date'],
                   },
                 },
                 transcript_chunk: { type: 'string' },
@@ -273,7 +282,11 @@ function writeAdMd(ad: AdSegment, outDir: string, pagePaths: string[]): string {
     .map((i) => `- Slide: [raw/${basename(pagePaths[i - 1])}](raw/${basename(pagePaths[i - 1])})`)
     .join('\n');
   const linksBlock = ad.links.length
-    ? '\n## Links\n\n' + ad.links.map((l) => `- [${l.label}](${l.url})`).join('\n') + '\n'
+    ? '\n## Links\n\n' +
+      ad.links
+        .map((l) => `- [${l.label}](${l.url})${l.end_date ? ` — until ${l.end_date}` : ''}`)
+        .join('\n') +
+      '\n'
     : '';
 
   const body = `# ${ad.title.en} / ${ad.title.ko}

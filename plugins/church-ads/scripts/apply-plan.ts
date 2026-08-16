@@ -46,7 +46,7 @@ interface Ad {
   location: { en: string; ko: string };
   description: { en: string; ko: string };
   full_description: { en: string; ko: string };
-  links: { label: string; url: string }[];
+  links: { label: string; url: string; end_date?: string }[];
   // Optional schedule metadata (present on ads processed after 2026-07-20).
   schedule_kind?: 'once' | 'recurring' | 'ongoing';
   start_date?: string;
@@ -338,11 +338,15 @@ async function main() {
       images,
       featured: entry.featured,
       primary: entry.primary,
+      // `endDate` makes a link retire on its own (a closed registration form
+       // disappears while the announcement it belongs to stays live), so it must
+       // survive the trip from segments.json into Sanity.
       links: ad.links.map((l, i) => ({
         _type: 'object',
         _key: `link-${i}`,
         label: l.label,
         url: l.url,
+        ...(l.end_date ? { endDate: l.end_date } : {}),
       })),
     };
     if (entry.publish_end_date) doc.publishEndDate = entry.publish_end_date;
