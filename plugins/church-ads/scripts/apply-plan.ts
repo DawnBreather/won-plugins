@@ -18,7 +18,7 @@
  *   bun run apply-plan.ts --out <YYYYMMDD.church-ads dir> --studio-env <path to studio/.env>
  */
 import { readFileSync, existsSync, createReadStream } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createClient, type SanityImageAssetDocument } from '@sanity/client';
 
@@ -195,6 +195,20 @@ function scheduleFields(ad: Ad): Record<string, unknown> {
   return out;
 }
 
+// The Events list orders by `coalesce(announcedDate, _createdAt) desc`, so an
+// event re-announced this week must carry THIS week's date. A `merge` into an
+// existing document keeps that document's original `_createdAt`, so without an
+// explicit `announcedDate` a re-announced ad sinks to the bottom of the list --
+// the Men's Group fall refresh (a merge over a Feb document) was live but
+// invisible below a dozen older events until this was set. Derived from the run's
+// out-dir name (`YYYYMMDD.church-ads`) so every ad the plan writes, new or merge,
+// floats to the top on announcement day. Returns undefined for a non-standard
+// dir name, and the field is then left unset (the `_createdAt` fallback stands).
+function announcedDateFromOutDir(outDir: string): string | undefined {
+  const m = basename(outDir).match(/^(\d{4})(\d{2})(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : undefined;
+}
+
 interface PlanEntry {
   ad_index: number;
   slug: string;
@@ -255,6 +269,7 @@ async function main() {
   const outIdx = args.indexOf('--out');
   if (outIdx < 0) throw new Error('Missing --out');
   const outDir = resolve(args[outIdx + 1]);
+  const runAnnouncedDate = announcedDateFromOutDir(outDir);
 
   const seIdx = args.indexOf('--studio-env');
   if (seIdx >= 0) loadEnv(resolve(args[seIdx + 1]));
@@ -341,6 +356,10 @@ async function main() {
 
     const doc: Record<string, unknown> = {
       _type: 'event',
+      // Float this ad to the top of the Events list on announcement day. Set on
+      // both new and merge so a re-announced (merged) event does not keep its
+      // original _createdAt and sink; see announcedDateFromOutDir above.
+      ...(runAnnouncedDate ? { announcedDate: runAnnouncedDate } : {}),
       title: ad.title,
       date: ad.date,
       time: ad.time,
